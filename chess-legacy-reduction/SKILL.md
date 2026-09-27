@@ -16,17 +16,19 @@ This skill defines the operational standards, path conventions, cluster etiquett
 
 ## 1. Remote Compute Etiquette & Python Environment
 
-1. **Mandatory Cluster Execution via Grid Engine (`qsub`)**:
-   - **All tasks that load or process data stacks** (frame stacking, ORM solving, 1rot/3rot reciprocal space conversions, and any tests reading `stack*.nxs`) **MUST be submitted as `qsub` jobs**:
+1. **Compute Resource Allocation: Data Reduction (`qsub`) vs. Data Analysis (SSH on Compute Nodes)**:
+   - **Data Reduction Pipeline (Mandatory `qsub`)**: All heavy reduction tasks (Pilatus raw CBF stacking into `stack*.nxs`, headless ORM solving with basinhopping, and 1rot/3rot reciprocal space conversions) **MUST be submitted as `qsub` jobs**:
      ```bash
      qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 <path-to-submission-script>.sh
      ```
-   - This allocates 200 GB RAM and 32 threads, running independently under Grid Engine so jobs continue even if client workstations disconnect or shut down.
-   - Monitor jobs with `/usr/local/bin/qstat -u ${USER}`.
-   - > [!IMPORTANT]
-   - > **Stack Loading I/O Latency & Memory Demands**:
-   - > Data stacks (`stack*.nxs`) are 10–35+ GB each. Loading a stack into memory over NFS takes **tens of minutes** and consumes high memory bandwidth and RAM.
-   - > **Never run stack-loading scripts interactively over SSH** (even on compute nodes like `lnx308`). Interactive runs risk session timeouts/disconnects and node overload. Always submit via `qsub`.
+     - This allocates 200 GB RAM and 32 threads, managing the multi-gigabyte NFS I/O and heavy compute without tying up interactive shells.
+     - > [!IMPORTANT]
+     - > **Stack Loading I/O Latency & Memory Demands**:
+     - > Data stacks (`stack*.nxs`) are 10–35+ GB each. Loading a stack into memory over NFS takes **tens of minutes** and consumes high memory bandwidth and RAM.
+     - > **Never run stack-loading or reciprocal conversion scripts interactively over SSH** (even on compute nodes like `lnx308`). Always submit via `qsub`.
+   - **Downstream Data Analysis & Slicing (Non-Interactive SSH on Compute Nodes)**:
+     - Downstream analysis tasks using `nxs_analysis_tools` (generating diagnostic 2D slices with `plot_slice()`, extracting linecuts with `Scissors`, calculating order parameters, or compiling LaTeX summaries) operate on already-converted volumes using lazy loading ($O(1)$ memory).
+     - These lightweight analysis tasks do **NOT** require `qsub` and can be executed directly via non-interactive SSH on dedicated CPU compute nodes (e.g. `ssh lnx308 /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python ...` or directly on `lnx308`, `lnx1033-f1`, `lnx1034-f1`).
    - > [!WARNING]
    - > **AVX2 Vector Instruction Requirement & Node Compatibility (Exit Code -4 / SIGILL)**:
    - > The shared C library `libhkl.so` in `StevenGomezAlvarado_Codebase/` was compiled with **AVX2 vector instructions**.
@@ -35,8 +37,8 @@ This skill defines the operational standards, path conventions, cluster etiquett
    - > `-q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*'`
    - > Known verified AVX2 hosts: `lnx307` (Broadwell), `lnx311`, `lnx312`, `lnx313` (Skylake Gold 6130), `lnx308`, `lnx1033-f1`, `lnx1034-f1`.
 2. **Compute Nodes vs. Login Node**:
-   - **`lnx201`** is a **login node** only. Never execute data reduction jobs directly here.
-   - Direct interactive SSH execution is strictly limited to lightweight tasks (file inspection, checking logs, monitoring `qstat`, or visualizing pre-existing slices). All data reduction and stack processing must go through `qsub`.
+   - **`lnx201`** is a **login node** only. Never execute data reduction jobs or heavy analysis directly here.
+   - Text editing, git operations, checking logs, and monitoring `qstat` are the only activities permitted on `lnx201`.
 3. **Designated Python Environments**:
    - **Legacy Reduction Pipeline**: All raw beamline stacking, ORM solving, and C-extension conversions (`libhkl.so`) strictly execute with:
      ```bash

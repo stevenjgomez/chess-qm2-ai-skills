@@ -33,16 +33,22 @@ The canonical, authoritative reference skills for `nxs_analysis_tools` and gener
 
 ---
 
-## 2. Remote Cluster Etiquette & Automated Reporting
+## 2. Remote Cluster Etiquette & Execution Modes
 
-1. **Node Separation**:
-   - **Login node (`lnx201`)**: Text editing, job management, lightweight git operations.
-   - **Compute node (`lnx308`)**: All heavy array manipulations, 3D rotations, batch rendering, and LaTeX compilation. Python: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`.
-2. **Headless Execution**:
+1. **Compute Nodes vs. Login Node**:
+   - **Login node (`lnx201`)**: Text editing, job submission, git operations, and lightweight monitoring only. Computing, array manipulation, or figure rendering on `lnx201` is strictly forbidden.
+   - **Compute nodes (`lnx308`, `lnx1033-f1`, `lnx1034-f1`)**: Downstream reciprocal space data analysis using `nxs_analysis_tools` (generating 2D slices with `plot_slice()`, 1D linecuts with `Scissors`, order parameter calculations, skew transformations, and LaTeX summary report compilation) can be executed directly via **non-interactive SSH** on dedicated CPU compute nodes (e.g. `ssh lnx308 /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python ...`) without `qsub`.
+2. **Data Reduction vs. Data Analysis Execution Policy**:
+   - **Raw Data Reduction Pipeline** (stacking raw CBF frames, ORM basinhopping solving, 3D reciprocal conversion): Heavy, long-running ($>30$ minutes), memory-intensive ($>100\text{ GB}$). Must be submitted via Grid Engine:
+     ```bash
+     qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 <job>.sh
+     ```
+   - **Downstream Data Analysis** (`nxs_analysis_tools`): Fast, operates on already-converted volumes with lazy loading ($O(1)$ RAM). Executed via non-interactive SSH on compute nodes (`lnx308`).
+3. **Headless Execution**:
    - Always invoke `matplotlib.use("Agg")` before importing `matplotlib.pyplot`.
-3. **Automated LaTeX Summaries**:
+4. **Automated LaTeX Summaries**:
    - Automatically compile generated figures into PDF reports using `/usr/bin/pdflatex -interaction=nonstopmode <file>.tex`.
-4. **Strict Data Safety: NEVER Delete Any `.nxs` Files**:
+5. **Strict Data Safety: NEVER Delete Any `.nxs` Files**:
    - > [!CAUTION]
    - > **Mandatory Data Protection Policy**: Under no circumstances should the agent or user delete, remove (`os.remove`, `rm`), or overwrite any `.nxs` files (`transform.nxs`, `*hkli*.nxs`, `stack*.nxs`, etc.). Re-runs and transformations must always generate newly suffixed files (`_1.nxs`, `_2.nxs`) rather than removing prior datasets.
 

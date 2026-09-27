@@ -34,17 +34,21 @@ Once installed, Antigravity automatically discovers and progressively mounts eac
 
 All skills in this suite strictly follow CLASSE compute cluster etiquette and beamline constraints:
 
-1. **Mandatory Batch Execution (`qsub`)**:
-   - Because single-rotation CBF data stacks (`stack*.nxs`) range from 10 GB to 35+ GB, loading frames over NFS requires tens of minutes and significant memory bandwidth.
-   - All stack loading, ORM solving, and 3D HKL conversions must be submitted via Grid Engine:
+1. **Execution Modes: Data Reduction (`qsub`) vs. Data Analysis (SSH on Compute Nodes)**:
+   - **Data Reduction Pipeline (Mandatory `qsub`)**: Raw Pilatus CBF frame stacking (10–35+ GB per rotation), headless ORM basinhopping, and 3D reciprocal conversions consume massive memory bandwidth and RAM. They **must** be submitted via Grid Engine:
      ```bash
      qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 <job_script>.sh
      ```
+   - **Downstream Data Analysis (Non-Interactive SSH)**: Downstream tasks using `nxs_analysis_tools` (generating diagnostic 2D slices with `plot_slice()`, 1D linecuts with `Scissors`, order parameters, and LaTeX compilation) operate on converted volumes using lazy loading ($O(1)$ RAM). These do **NOT** require `qsub` and are executed directly via non-interactive SSH on dedicated CPU compute nodes (e.g. `ssh lnx308 /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python ...`).
+   - **Login Node (`lnx201`)**: Strictly for text editing, git, and job submission. Computing or figure rendering on `lnx201` is strictly forbidden.
 2. **AVX2 Vector Instruction Enforcing**:
    - The beamline's compiled C library (`libhkl.so`) requires AVX2 vector instructions. Jobs dispatched to older nodes (e.g. `lnx327`) crash with `SIGILL` (Exit Code `-4`). Queue targets are restricted to verified AVX2 hosts (`lnx307`, `lnx311`, `lnx312`, `lnx313`, `lnx308`, `lnx1033-f1`, `lnx1034-f1`).
-3. **Dedicated Python Environment**:
-   - Executes using the shared beamline environment at `/nfs/chess/sw/anaconda3_jpcr/bin/python`. The shared environment is never modified (`pip`/`conda` installs are prohibited).
-4. **Energy & Lattice Parameter Scaling**:
+3. **Designated Python Environments**:
+   - **Legacy Reduction Pipeline**: `/nfs/chess/sw/anaconda3_jpcr/bin/python` (shared beamline environment, frozen/never modified).
+   - **Modern Analysis & Visualization**: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python` (hosts `nxs_analysis_tools`, PyTorch, and `plot_slice()`).
+4. **Strict Data Safety Policy**:
+   - Never delete or remove any `.nxs` files. Legacy conversion scripts automatically append integer suffixes (`1rot_hkli_1.nxs`, etc.) if a target file already exists.
+5. **Energy & Lattice Parameter Scaling**:
    - Miller index bounds $(H, K, L)$ scale with incident beam energy ($E$) and real-space lattice parameters ($a, b, c$). Customized bounds (e.g. $H, K: \pm 3.0, L: \pm 3.5$ at $15\text{ keV}$) prevent generating oversized, zero-padded reciprocal volumes.
 
 ---
