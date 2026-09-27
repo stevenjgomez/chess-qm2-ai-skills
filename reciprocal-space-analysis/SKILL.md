@@ -42,6 +42,9 @@ The canonical, authoritative reference skills for `nxs_analysis_tools` and gener
    - Always invoke `matplotlib.use("Agg")` before importing `matplotlib.pyplot`.
 3. **Automated LaTeX Summaries**:
    - Automatically compile generated figures into PDF reports using `/usr/bin/pdflatex -interaction=nonstopmode <file>.tex`.
+4. **Strict Data Safety: NEVER Delete Any `.nxs` Files**:
+   - > [!CAUTION]
+   - > **Mandatory Data Protection Policy**: Under no circumstances should the agent or user delete, remove (`os.remove`, `rm`), or overwrite any `.nxs` files (`transform.nxs`, `*hkli*.nxs`, `stack*.nxs`, etc.). Re-runs and transformations must always generate newly suffixed files (`_1.nxs`, `_2.nxs`) rather than removing prior datasets.
 
 ---
 

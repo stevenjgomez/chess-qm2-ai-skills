@@ -60,6 +60,12 @@ This skill defines the operational standards, path conventions, cluster etiquett
 6. **Real-Time Log Streaming & Unbuffered Execution (`python -u`)**:
    - Long-running reduction and conversion jobs (which process thousands of frames over 30–60+ minutes) must always be executed in unbuffered mode (`/nfs/chess/sw/anaconda3_jpcr/bin/python -u`).
    - Orchestrator wrappers must never use `subprocess.run(stdout=subprocess.PIPE)`, which traps stdout in memory until exit. Always use `subprocess.Popen` with line-by-line streaming and `flush=True` so that real-time progress updates (e.g. `Loaded frame X...`) stream immediately to cluster log files for user inspection.
+7. **Strict Data Safety: NEVER Delete Any `.nxs` Files**:
+   - > [!CAUTION]
+   - > **Mandatory Data Protection Policy**: Under no circumstances should the agent or user delete, remove (`os.remove`, `rm`), or overwrite any `.nxs` files (`stack*.nxs`, `ormatrix_*.nxs`, `1rot_hkli*.nxs`, `3rot_hkli*.nxs`, etc.).
+   - > Synchrotron raw CBF stacks and reciprocal space volumes represent irreplaceable beamtime and compute resources.
+   - > **Automatic Integer Suffixing**: The legacy reduction scripts (`Pil6M_HKLConv_3D_2022_1rot.py` and `3rot.py`) natively check `while os.path.exists(workingdir + file_name):` and automatically append an integer suffix (`1rot_hkli_1.nxs`, `1rot_hkli_2.nxs`, etc.) if a target file already exists.
+   - > If re-running conversion with different limits or forced modes (`--force-hkl`), always allow the pipeline to generate a newly suffixed file rather than deleting prior reconstructions.
 
 ---
 
