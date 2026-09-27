@@ -37,13 +37,18 @@ This skill defines the operational standards, path conventions, cluster etiquett
 2. **Compute Nodes vs. Login Node**:
    - **`lnx201`** is a **login node** only. Never execute data reduction jobs directly here.
    - Direct interactive SSH execution is strictly limited to lightweight tasks (file inspection, checking logs, monitoring `qstat`, or visualizing pre-existing slices). All data reduction and stack processing must go through `qsub`.
-3. **Designated Python Environment**:
-   - All legacy data reduction scripts must strictly execute with:
+3. **Designated Python Environments**:
+   - **Legacy Reduction Pipeline**: All raw beamline stacking, ORM solving, and C-extension conversions (`libhkl.so`) strictly execute with:
      ```bash
      /nfs/chess/sw/anaconda3_jpcr/bin/python
      ```
-   - > [!CAUTION]
-     > The `/nfs/chess/sw/anaconda3_jpcr` environment is a shared beamline resource and **must never be modified** (no `pip install`, no `conda install`). All tools and scripts must strictly use the pre-installed libraries (`pyFAI`, `fabio`, `spec2nexus`, `nexusformat`, `scipy`, `PIL`, `h5py`, `matplotlib`).
+     > [!CAUTION]
+     > The `/nfs/chess/sw/anaconda3_jpcr` environment is a shared beamline resource and **must never be modified** (no `pip install`, no `conda install`).
+   - **Modern Analysis & Visualization (`nxs_analysis_tools`)**: All post-conversion slicing, reciprocal volume visualization, and `plot_slice()` rendering strictly execute with:
+     ```bash
+     /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python
+     ```
+     The diagnostic visualizer (`slice_visualizer.py`) automatically re-executes itself inside this environment to leverage `nxs_analysis_tools.plot_slice()` with dynamic crystallographic skew angles (e.g. `skew_angle=60°` for hexagonal $HK$).
 4. **Headless Execution**:
    - Always set `matplotlib.use("Agg")` prior to importing `pyplot` to prevent display connection errors during remote runs.
 5. **NeXus Memory Configuration**:
@@ -131,10 +136,10 @@ Standard path patterns at CHESS ID4B:
    - > **Runtime Expectation**: ORM solving involves multi-stage non-linear basinhopping with local BFGS iterations over dozens of reflections and can take **from tens of minutes up to several hours**. Submitting as a batch job via `qsub` is strictly required to decouple from local client uptime.
    - Export `ormatrix_auto.nxs`, `peaklist1.npy`, and `ormfinder.log`.
 4. **1-Rotation HKL Conversion**: Execute `Pil6M_HKLConv_3D_2022_1rot.py` to produce `1rot_hkli.nxs`.
-5. **Cross-Sectional Visualization**: Slice the 3D volume along principal planes:
-   - $(HK0)$: Central cut along $L$
-   - $(H0L)$: Central cut along $K$
-   - $(0KL)$: Central cut along $H$
+5. **Cross-Sectional Visualization**: Slice the 3D volume along principal planes using `nxs_analysis_tools.plot_slice()` executed under `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/`:
+   - $(HK0)$: Central cut along $L$, sheared by dynamic crystallographic skew angle $\gamma^*$ (e.g. `skew_angle=60°` for hexagonal lattices) to preserve true lattice symmetry.
+   - $(H0L)$: Central cut along $K$, with skew angle $\beta^*$ (typically $90^\circ$).
+   - $(0KL)$: Central cut along $H$, with skew angle $\alpha^*$ (typically $90^\circ$).
    Save as `slice_HK.png`, `slice_HL.png`, `slice_KL.png`, and `slices_summary.png`.
 6. **User Verification Gate**: Present cross-sectional slice figures to the user. **Wait for user confirmation** before proceeding.
 
