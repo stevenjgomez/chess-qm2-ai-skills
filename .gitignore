@@ -1,0 +1,32 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Data files (HDF5, NeXus, CBF, EDF, NumPy)
+*.nxs
+*.h5
+*.hdf5
+*.cbf
+*.edf
+*.tif
+*.tiff
+*.raw
+*.npy
+*.npz
+
+# Logs, run traces & temporary files
+*.log
+*.tmp
+*.bak
+*~
+
+# Operating System & Editor files
+.DS_Store
+.directory
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
