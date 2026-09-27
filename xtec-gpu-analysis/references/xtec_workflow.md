@@ -1,6 +1,6 @@
 # XTEC-GPU Pipeline & Visualization Standards
 
-This reference guide documents the end-to-end X-ray Temperature Clustering (XTEC-GPU) pipeline, command-line interface, discrete visualization rules, and report formatting.
+This reference guide documents the end-to-end X-ray Temperature Clustering (XTEC-GPU) pipeline, 4D dataset compilation via `to_xtec()`, command-line interface, discrete visualization rules, and report formatting.
 
 ---
 
@@ -9,36 +9,110 @@ This reference guide documents the end-to-end X-ray Temperature Clustering (XTEC
 XTEC automates the discovery of phase transitions, charge density waves (CDWs), and order parameters in large reciprocal-space temperature series without human bias.
 
 ```text
-[3D NeXus Temperature Series (I(Q, T))]
+[3D NeXus Series across Temperatures]
                  │
                  ▼
-     [1. Preprocessing (GPU)]
-     ├── Mask_Zeros (filter dead pixels)
-     └── Threshold_Background (KL-divergence cutoff)
+  [Phase 0: 4D Dataset Compilation (lnx308 CPU)]
+  ├── TempDependence.find_temperatures()
+  ├── TempDependence.load_datasets() (auto-detect NXRefine vs CHESS)
+  └── TempDependence.to_xtec() -> xtec_data.nxs
                  │
                  ▼
-       [2. Model Selection]
-       ├── BIC Sweep (k = 2 ... 14) Mode 'd' (Direct Voxel GMM)
-       ├── BIC Sweep (k = 2 ... 14) Mode 's' (Peak-Averaged GMM)
-       └── Knee / Minimum BIC Determination
+      [Phase 1: Preprocessing (lnx4428 GPU)]
+      ├── Mask_Zeros (filter dead pixels)
+      └── Threshold_Background (KL-divergence cutoff)
                  │
                  ▼
-       [3. Clustering & Reordering]
-       ├── GMM Training (torchgmm, kmeans++ seed)
-       └── Deterministic Reordering (descending low-T intensity)
+      [Phase 2: Model Selection (lnx4428 GPU)]
+      ├── BIC Sweep (k = 2 ... 14) Mode 'd' (Direct Voxel GMM)
+      ├── BIC Sweep (k = 2 ... 14) Mode 's' (Peak-Averaged GMM)
+      └── Knee / Minimum BIC Determination
                  │
                  ▼
-       [4. Visualization & Reporting]
-       ├── Discrete Reciprocal-Space Q-Map (white background)
-       ├── Synchronized Trajectories & Average Intensities
-       └── Comprehensive Markdown Report (absolute image paths)
+      [Phase 3: Clustering & Reordering (lnx4428 GPU)]
+      ├── GMM Training (torchgmm, kmeans++ seed)
+      └── Deterministic Reordering (descending low-T intensity)
+                 │
+                 ▼
+      [Phase 4: Visualization & Reporting]
+      ├── Discrete Reciprocal-Space Q-Map (pure white background)
+      ├── Synchronized Trajectories & Average Intensities
+      └── Comprehensive Markdown Report (absolute image paths)
 ```
 
 ---
 
-## 2. CLI Usage (`xtec-gpu`)
+## 2. Phase 0: Compiling 4D Datasets via `to_xtec()`
 
-The package provides terminal-driven subcommands mirroring the NeXpy plugin:
+XTEC-GPU algorithms require a 4D `NXdata` structure:
+- **Axis 0**: Temperature (`Te` in K).
+- **Axes 1–3**: Spatial reciprocal lattice coordinates (`Qh, Qk, Ql` or `H, K, L`).
+
+### 2.1 Automated Helper Script (`scripts/generate_xtec_input.py`)
+
+Run the bundled utility remotely on CPU compute node `lnx308`:
+
+```bash
+# Auto-detects format (NXRefine or Legacy CHESS) and writes xtec_data.nxs
+ssh -o BatchMode=yes lnx308 "/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python \
+  /home/sgomezalvarado/.gemini/config/skills/xtec-gpu-analysis/scripts/generate_xtec_input.py \
+  --sample-dir /path/to/sample \
+  --output /path/to/sample/xtec_data.nxs"
+```
+
+#### CLI Flags:
+- `--sample-dir` / `-s`: Root directory of sample containing temperature files or subdirectories.
+- `--output` / `-o`: Destination `.nxs` file (defaults to `<sample-dir>/xtec_data.nxs`).
+- `--file-ending` / `-e`: Explicit pattern for legacy CHESS (e.g. `1rot_hkli.nxs`, `3rot_hkli.nxs`).
+- `--temperatures` / `-t`: Filter specific temperatures (e.g. `--temperatures "111,116,281"`).
+- `--exclude-temperatures` / `-x`: Exclude anomalous temperatures.
+- `--force` / `-f`: Overwrite existing output file (disabled by default for data safety).
+
+### 2.2 Programmatic Usage in Python
+
+#### A. NXRefine Datasets
+Top-level `*_<temp>.nxs` files pointing via `NXlink` to `<temp>/transform.nxs`:
+```python
+from nxs_analysis_tools.chess import TempDependence
+
+td = TempDependence("/path/to/sample_dir")
+td.find_temperatures()
+# Pre-validates candidate folders and loads via lazy NXlinks
+td.load_datasets(use_nxlink=True, print_tree=False)
+td.to_xtec(filepath="/path/to/sample_dir/xtec_data.nxs", overwrite=False)
+```
+
+#### B. Legacy CHESS Datasets
+Subdirectories named `<temp>/` containing `*1rot_hkli.nxs` or `*3rot_hkli.nxs`:
+```python
+from nxs_analysis_tools.chess import TempDependence
+
+td = TempDependence("/path/to/sample_dir")
+td.find_temperatures()
+# Auto-detects legacy CHESS folders and matches specified file ending
+td.load_datasets(file_ending="1rot_hkli.nxs", print_tree=False)
+td.to_xtec(filepath="/path/to/sample_dir/xtec_data.nxs", overwrite=False)
+```
+
+### 2.3 Verifying the Generated NeXus File
+
+Inspect the compiled file using `nexusformat`:
+```python
+import nexusformat.nexus as nx
+
+root = nx.nxload("/path/to/sample_dir/xtec_data.nxs")
+data = root['entry']['data']
+
+print("Signal shape:", data.nxsignal.shape)  # e.g. (15, 201, 201, 151) -> (T, Qh, Qk, Ql)
+print("Axes:", [ax.nxname for ax in data.nxaxes])  # ['Te', 'Qh', 'Qk', 'Ql']
+print("Temperatures (K):", data['Te'].nxdata)
+```
+
+---
+
+## 3. CLI Usage (`xtec-gpu`)
+
+Once `xtec_data.nxs` is available, execute clustering subcommands on GPU node `lnx4428`:
 
 ```bash
 # 1. Direct voxel clustering (Mode d)
@@ -54,9 +128,9 @@ PYTHONPATH=src /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-s data.nxs -o bic_s/ -
 
 ---
 
-## 3. Visualization Standards
+## 4. Visualization Standards
 
-### 3.1 Reciprocal-Space Q-Map (`qmap.png`)
+### 4.1 Reciprocal-Space Q-Map (`qmap.png`)
 
 - **Palette**: Discrete qualitative colormap. Never use continuous colormaps like `viridis`, `plasma`, or `jet`.
 - **Background**: Pixels not assigned to any cluster (or below threshold) must be rendered **pure white or transparent**.
@@ -78,7 +152,7 @@ PYTHONPATH=src /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-s data.nxs -o bic_s/ -
   ```
 - **Physical Extent**: Always pass `extent=[H_min, H_max, K_min, K_max]` and label axes with reciprocal lattice units (e.g. `H (r.l.u.)`, `K (r.l.u.)`) and slice level (e.g. `L = 0.50`).
 
-### 3.2 Temperature Trajectories (`trajectories.png`)
+### 4.2 Temperature Trajectories (`trajectories.png`)
 
 - **Color Synchronization**: The color of Cluster $k$ in the trajectory plot must match Cluster $k$ in the Q-map.
 - **Legend Layout**: When $k > 5$, anchor the legend outside the axes:
@@ -88,7 +162,7 @@ PYTHONPATH=src /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-s data.nxs -o bic_s/ -
 
 ---
 
-## 4. Re-Plotting Existing Outputs
+## 5. Re-Plotting Existing Outputs
 
 When visualization styles are updated, existing `results.h5` files can be re-rendered without re-running the heavy GMM EM training loop using `scripts/replot_figures.py`.
 
@@ -112,7 +186,7 @@ _plot_avg_intensities(data, Data_thresh, cluster_assigns, nc, output_dir)
 
 ---
 
-## 5. Report Integrity & Absolute Image Linking
+## 6. Report Integrity & Absolute Image Linking
 
 When maintaining `report.md`:
 - **Never use relative image links** (e.g. `./workflow_runs/...`), because reports symlinked at the workspace root or viewed in separate tools will break.
@@ -121,3 +195,10 @@ When maintaining `report.md`:
   ![Reciprocal Space Q-Map](/home/sgomezalvarado/XTEC_CUDA/benchmark_test/workflow_runs/srn0_benchmark/final_run/xtec_d/qmap.png)
   ```
 - **Map Indices**: Provide a clear table cross-referencing 1-indexed plot labels (`Cluster 1` to `Cluster K`) with 0-indexed HDF5 datasets in `results.h5`.
+
+---
+
+## 7. Mandatory Data Safety Policy
+
+> [!CAUTION]
+> **NEVER delete any `.nxs` files**. If a file already exists, reuse it or use non-destructive suffixing (`xtec_data_1.nxs`). Never issue `rm` or `os.remove` on any `.nxs` file.
