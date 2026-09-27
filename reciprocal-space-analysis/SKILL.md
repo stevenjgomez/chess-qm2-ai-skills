@@ -30,7 +30,7 @@ This skill provides comprehensive guidelines, mathematical formulas, and operati
 ## 2. Working with `nxs_analysis_tools`
 
 1. **Documentation & Release Notes Priority**:
-   - Rather than inspecting raw source code, consult the GitHub PR notes, release summaries, and ReadTheDocs site (`https://github.com/stevenjgomez/nxs_analysis_tools.git`, branch `feature/v0.2.0`).
+   - Rather than inspecting raw source code, consult the GitHub PR notes, release summaries, and ReadTheDocs site (`https://github.com/stevenjgomez/nxs_analysis_tools.git`, branch `main`).
 2. **NeXus Memory Limits (`nxsetmemory`)**:
    - By default `nexusformat` enforces a 2,000 MB memory slab limit (`NX_MEMORY=2000`). For large 3D reciprocal space volumes, raise this immediately upon import:
      ```python
