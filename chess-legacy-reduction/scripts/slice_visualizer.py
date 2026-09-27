@@ -3,7 +3,8 @@
 Diagnostic Cross-Section Visualizer for Reciprocal Space NeXus Volumes.
 Extracts central 2D slices (HK, HL, KL planes) from 1rot_hkli.nxs or 3rot_hkli.nxs
 and visualizes them using nxs_analysis_tools.plot_slice() with true crystallographic
-skew angles (e.g. 60° for hexagonal in-plane HK).
+skew angles (e.g. 60° for hexagonal in-plane HK) and true physical reciprocal
+lattice aspect ratios (b*/a*, c*/a*, c*/b*).
 
 Automatically re-executes inside /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python
 if launched from another environment (e.g. anaconda3_jpcr).
@@ -26,32 +27,22 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from nexusformat.nexus import nxload, NXdata, NXfield, nxsetmemory
-from nxs_analysis_tools import plot_slice
+from nxs_analysis_tools import plot_slice, reciprocal_lattice_params
 
 
-def compute_reciprocal_angles(unit_cell_str):
+def get_reciprocal_parameters(unit_cell_str):
     """
-    Compute reciprocal lattice angles alpha*, beta*, gamma* from real-space cell:
-    a, b, c, alpha, beta, gamma.
+    Compute reciprocal lattice vector lengths (a*, b*, c*) in Å⁻¹
+    and reciprocal angles (alpha*, beta*, gamma*) in degrees from real-space cell string:
+    'a, b, c, alpha, beta, gamma'.
     """
     try:
         parts = [float(x.strip()) for x in unit_cell_str.split(",")]
-        a, b, c, alpha, beta, gamma = parts
-        ar = np.radians(alpha)
-        br = np.radians(beta)
-        gr = np.radians(gamma)
-        
-        cos_as = np.clip((np.cos(br) * np.cos(gr) - np.cos(ar)) / (np.sin(br) * np.sin(gr)), -1.0, 1.0)
-        cos_bs = np.clip((np.cos(ar) * np.cos(gr) - np.cos(br)) / (np.sin(ar) * np.sin(gr)), -1.0, 1.0)
-        cos_gs = np.clip((np.cos(ar) * np.cos(br) - np.cos(gr)) / (np.sin(ar) * np.sin(br)), -1.0, 1.0)
-        
-        alpha_star = float(np.degrees(np.arccos(cos_as)))
-        beta_star = float(np.degrees(np.arccos(cos_bs)))
-        gamma_star = float(np.degrees(np.arccos(cos_gs)))
-        return alpha_star, beta_star, gamma_star
+        a_star, b_star, c_star, alpha_star, beta_star, gamma_star = reciprocal_lattice_params(tuple(parts))
+        return float(a_star), float(b_star), float(c_star), float(alpha_star), float(beta_star), float(gamma_star)
     except Exception as e:
-        print(f"Warning: Failed to parse unit cell '{unit_cell_str}' ({e}). Defaulting to orthogonal angles (90°).")
-        return 90.0, 90.0, 90.0
+        print(f"Warning: Failed to compute reciprocal parameters from unit cell '{unit_cell_str}' ({e}). Defaulting to isotropic 90°.")
+        return 1.0, 1.0, 1.0, 90.0, 90.0, 90.0
 
 
 def extract_slice(counts, coord_array, axis_idx, thickness=0.05):
@@ -102,10 +93,12 @@ def main():
                 unit_cell_str = f.read().strip()
                 print(f"Loaded unit cell from {unitcell_txt}: {unit_cell_str}")
 
-    alpha_star, beta_star, gamma_star = 90.0, 90.0, 90.0
+    a_star, b_star, c_star, alpha_star, beta_star, gamma_star = 1.0, 1.0, 1.0, 90.0, 90.0, 90.0
     if unit_cell_str:
-        alpha_star, beta_star, gamma_star = compute_reciprocal_angles(unit_cell_str)
-    print(f"Reciprocal angles: alpha*={alpha_star:.1f}°, beta*={beta_star:.1f}°, gamma*={gamma_star:.1f}°")
+        a_star, b_star, c_star, alpha_star, beta_star, gamma_star = get_reciprocal_parameters(unit_cell_str)
+    print(f"Reciprocal lengths: a*={a_star:.4f} Å⁻¹, b*={b_star:.4f} Å⁻¹, c*={c_star:.4f} Å⁻¹")
+    print(f"Reciprocal angles : alpha*={alpha_star:.1f}°, beta*={beta_star:.1f}°, gamma*={gamma_star:.1f}°")
+    print(f"Physical aspect corrections: b*/a*={b_star/a_star:.4f} (HK), c*/a*={c_star/a_star:.4f} (HL), c*/b*={c_star/b_star:.4f} (KL)")
 
     print(f"Loading reciprocal space volume: {nxs_path}")
     nxsetmemory(100000)
@@ -173,6 +166,8 @@ def main():
         cmap=args.cmap,
         cbar=True
     )
+    # Apply physical reciprocal aspect ratio correction
+    ax.set_aspect(ax.get_aspect() * (b_star / a_star))
     fig.savefig(hk_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {hk_out}")
@@ -189,10 +184,12 @@ def main():
         vmax=c_max,
         xlim=h_bounds,
         ylim=l_bounds,
-        title="HL Plane (K = 0)",
+        title=f"HL Plane (K = 0, skew={beta_star:.0f}°)" if beta_star != 90.0 else "HL Plane (K = 0)",
         cmap=args.cmap,
         cbar=True
     )
+    # Apply physical reciprocal aspect ratio correction
+    ax.set_aspect(ax.get_aspect() * (c_star / a_star))
     fig.savefig(hl_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {hl_out}")
@@ -209,10 +206,12 @@ def main():
         vmax=c_max,
         xlim=k_bounds,
         ylim=l_bounds,
-        title="KL Plane (H = 0)",
+        title=f"KL Plane (H = 0, skew={alpha_star:.0f}°)" if alpha_star != 90.0 else "KL Plane (H = 0)",
         cmap=args.cmap,
         cbar=True
     )
+    # Apply physical reciprocal aspect ratio correction
+    ax.set_aspect(ax.get_aspect() * (c_star / b_star))
     fig.savefig(kl_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {kl_out}")
@@ -223,10 +222,17 @@ def main():
 
     plot_slice(nx_hk, skew_angle=gamma_star, ax=axes[0], logscale=True, vmin=c_min, vmax=c_max,
                xlim=h_bounds, ylim=k_bounds, title=f"HK Plane (skew={gamma_star:.0f}°)", cmap=args.cmap, cbar=False)
+    axes[0].set_aspect(axes[0].get_aspect() * (b_star / a_star))
+
     plot_slice(nx_hl, skew_angle=beta_star, ax=axes[1], logscale=True, vmin=c_min, vmax=c_max,
-               xlim=h_bounds, ylim=l_bounds, title="HL Plane", cmap=args.cmap, cbar=False)
+               xlim=h_bounds, ylim=l_bounds, title=f"HL Plane (skew={beta_star:.0f}°)" if beta_star != 90.0 else "HL Plane",
+               cmap=args.cmap, cbar=False)
+    axes[1].set_aspect(axes[1].get_aspect() * (c_star / a_star))
+
     im_last = plot_slice(nx_kl, skew_angle=alpha_star, ax=axes[2], logscale=True, vmin=c_min, vmax=c_max,
-                         xlim=k_bounds, ylim=l_bounds, title="KL Plane", cmap=args.cmap, cbar=False)
+                         xlim=k_bounds, ylim=l_bounds, title=f"KL Plane (skew={alpha_star:.0f}°)" if alpha_star != 90.0 else "KL Plane",
+                         cmap=args.cmap, cbar=False)
+    axes[2].set_aspect(axes[2].get_aspect() * (c_star / b_star))
 
     summary_fig.subplots_adjust(right=0.88, wspace=0.3)
     cbar_ax = summary_fig.add_axes([0.90, 0.20, 0.015, 0.60])

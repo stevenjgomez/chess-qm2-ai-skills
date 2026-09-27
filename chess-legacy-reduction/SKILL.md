@@ -144,10 +144,10 @@ Standard path patterns at CHESS ID4B:
    - > **Runtime Expectation**: ORM solving involves multi-stage non-linear basinhopping with local BFGS iterations over dozens of reflections and can take **from tens of minutes up to several hours**. Submitting as a batch job via `qsub` is strictly required to decouple from local client uptime.
    - Export `ormatrix_auto.nxs`, `peaklist1.npy`, and `ormfinder.log`.
 4. **1-Rotation HKL Conversion**: Execute `Pil6M_HKLConv_3D_2022_1rot.py` to produce `1rot_hkli.nxs`.
-5. **Cross-Sectional Visualization**: Slice the 3D volume along principal planes using `nxs_analysis_tools.plot_slice()` executed under `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/`:
-   - $(HK0)$: Central cut along $L$, sheared by dynamic crystallographic skew angle $\gamma^*$ (e.g. `skew_angle=60°` for hexagonal lattices) to preserve true lattice symmetry.
-   - $(H0L)$: Central cut along $K$, with skew angle $\beta^*$ (typically $90^\circ$).
-   - $(0KL)$: Central cut along $H$, with skew angle $\alpha^*$ (typically $90^\circ$).
+5. **Cross-Sectional Visualization**: Slice the 3D volume along principal planes using `nxs_analysis_tools.plot_slice()` executed under `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/` with physical reciprocal lattice aspect ratio calibration:
+   - $(HK0)$: Central cut along $L$, sheared by dynamic crystallographic skew angle $\gamma^*$ (e.g. `skew_angle=60°` for hexagonal lattices) and aspect-scaled by $b^*/a^* \times \text{ax.get\_aspect()}$.
+   - $(H0L)$: Central cut along $K$, with skew angle $\beta^*$ and aspect-scaled by $c^*/a^* \times \text{ax.get\_aspect()}$ (eliminates artificial vertical stretching along $L$).
+   - $(0KL)$: Central cut along $H$, with skew angle $\alpha^*$ and aspect-scaled by $c^*/b^* \times \text{ax.get\_aspect()}$.
    Save as `slice_HK.png`, `slice_HL.png`, `slice_KL.png`, and `slices_summary.png`.
 6. **User Verification Gate**: Present cross-sectional slice figures to the user. **Wait for user confirmation** before proceeding.
 

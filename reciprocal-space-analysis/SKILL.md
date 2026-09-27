@@ -103,9 +103,35 @@ scissors.cut_data(center=(0.0, 0.0, -0.5), window=(0.2, 0.2, 0.25))
 - **Discovery**: Always discover temperatures dynamically using `sample.find_temperatures()`.
 - **Loading**: Use `sample.load_datasets(temperatures=[...])`.
 
-### 3.6 Colormaps, LogNorm & Lattice Skew
-- In `plot_slice(..., logscale=True)`, set `vmin > 0` (e.g. `vmin=1, vmax=1e4`) to avoid `LogNorm` errors on zero or negative masked counts.
-- For non-orthogonal / hexagonal systems (`@angles = [60.0, 90.0, 90.0]`), set `skew_angle=60` in `plot_slice` to correctly project the reciprocal lattice geometry.
+### 3.6 Colormaps, LogNorm & True Physical Aspect Ratio Calibration
+- **LogNorm Cutoffs**: In `plot_slice(..., logscale=True)`, set `vmin > 0` (e.g. `vmin=1, vmax=1e4`) to avoid `LogNorm` errors on zero or negative masked counts.
+- **Lattice Skew**: For non-orthogonal / hexagonal systems (`@angles = [60.0, 90.0, 90.0]`), set `skew_angle=gamma_star` (e.g. `skew_angle=60`) in `plot_slice` to project true reciprocal lattice parallelogram geometry.
+- **Physical Aspect Ratio Calibration (`reciprocal_lattice_params`)**:
+  - `plot_slice()` automatically sets `ax.set(aspect=np.cos(shear_angle))` (which equals $\sin(\theta_{\text{skew}})$) to correct for shear distortion assuming equal physical reciprocal lengths ($v_X^* = v_Y^*$).
+  - When reciprocal lattice vectors differ in physical length ($a^* \ne b^*$ or along out-of-plane cuts $(HL), (KL)$ where $c^* \ne a^*, b^*$), calculate reciprocal lattice parameters using `reciprocal_lattice_params(lattice_params)`:
+    ```python
+    from nxs_analysis_tools.datareduction import reciprocal_lattice_params
+
+    a_star, b_star, c_star, alpha_star, beta_star, gamma_star = reciprocal_lattice_params(
+        (a, b, c, alpha, beta, gamma)
+    )
+    ```
+  - Apply the physical aspect ratio calibration immediately after calling `plot_slice()`:
+    $$\boxed{A_{\text{final}} = \frac{v_Y^*}{v_X^*} \times \text{ax.get\_aspect()}}$$
+    ```python
+    # HK Plane (X=H, Y=K):
+    plot_slice(nx_hk, skew_angle=gamma_star, ax=ax_hk, ...)
+    ax_hk.set_aspect(ax_hk.get_aspect() * (b_star / a_star))
+
+    # HL Plane (X=H, Y=L):
+    plot_slice(nx_hl, skew_angle=beta_star, ax=ax_hl, ...)
+    ax_hl.set_aspect(ax_hl.get_aspect() * (c_star / a_star))
+
+    # KL Plane (X=K, Y=L):
+    plot_slice(nx_kl, skew_angle=alpha_star, ax=ax_kl, ...)
+    ax_kl.set_aspect(ax_kl.get_aspect() * (c_star / b_star))
+    ```
+  - This ensures that $1\text{ \AA}^{-1}$ occupies the exact same screen pixel length in every physical direction, preserving circular diffuse scattering rings and preventing elongation along the $L$ axis.
 
 ---
 
