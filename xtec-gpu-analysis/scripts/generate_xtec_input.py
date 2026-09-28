@@ -545,6 +545,8 @@ def main():
     try:
         from nxs_analysis_tools.chess import TempDependence
         import nexusformat.nexus as nx
+        # Raise NeXus memory slab limit for loading full 3D volumes into memory
+        nx.nxsetmemory(150000)  # 150 GB
     except ImportError as e:
         print(
             f"Error importing nxs_analysis_tools or nexusformat: {e}\n"
