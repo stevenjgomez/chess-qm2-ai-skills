@@ -289,8 +289,17 @@ def find_euler(projectdir, stack_file, uca, ucb, ucc, ucal, ucbe, ucga, hkl_modu
             pre2 = basinhopping(minfuncU, x0, T=0.002, minimizer_kwargs=min_kwargs)
             logging.info(f"Eu angles B: {pre2.x}, chisq: {pre2.fun:.4f}")
 
-        x0 = [0, 0, 0]
-        logging.info("Stage 1 full peak optimization...")
+            # Select better preliminary configuration for Stage 1
+            if pre1.fun < pre2.fun:
+                x0 = pre1.x
+                logging.info(f"Selected config A as starting point for Stage 1 (chisq: {pre1.fun:.4f})")
+            else:
+                x0 = pre2.x
+                logging.info(f"Selected config B as starting point for Stage 1 (chisq: {pre2.fun:.4f})")
+        else:
+            x0 = [0, 0, 0]
+
+        logging.info(f"Stage 1 full peak optimization (starting x0: {x0})...")
         min_kwargs = {"method": "BFGS", "args": (myUB, peaklist, wl)}
         ret1 = basinhopping(minfuncU, x0, T=0.002, minimizer_kwargs=min_kwargs)
         logging.info(f"Stage 1 Eu angles: {ret1.x}, chisq: {ret1.fun:.4f}")
@@ -363,8 +372,9 @@ def main():
     parser = argparse.ArgumentParser(description="Headless Orientation Matrix Finder")
     parser.add_argument("--projectdir", required=True, help="Processed temperature directory (where stack1.nxs is located)")
     parser.add_argument("--unitcell", required=True, help="Unit cell CSV file or 'a,b,c,alpha,beta,gamma'")
-    parser.add_argument("--codebase", default="/nfs/chess/id4baux/2026-2/gomez-al-4850-a/StevenGomezAlvarado_Codebase",
-                        help="Path to legacy codebase containing hkl.py and libhkl.so")
+    parser.add_argument("--codebase",
+                        default=os.environ.get("CHESS_LEGACY_CODEBASE", os.path.expanduser("~/Documents/automate_legacy_workflow/StevenGomezAlvarado_Codebase")),
+                        help="Path to legacy codebase containing hkl.py and libhkl.so (default: $CHESS_LEGACY_CODEBASE or ~/Documents/automate_legacy_workflow/StevenGomezAlvarado_Codebase)")
     parser.add_argument("--valmin", type=float, default=0.9, help="Initial minimum intensity fraction")
     parser.add_argument("--valmax", type=float, default=1.0, help="Maximum intensity fraction")
     parser.add_argument("--lower-bound", type=int, default=50, help="Minimum acceptable number of peaks")

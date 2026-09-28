@@ -4,26 +4,34 @@ Synchrotron reciprocal space datasets (especially 3D volumes) routinely reach gi
 
 ---
 
-## 1. Login Node vs. Compute Node Separation
+## 1. Login Node vs. Compute Node Separation & Interactive Sessions
 
-In environments like CHESS, strictly differentiate between node classes:
-- **`lnx201`** is a **login node** intended exclusively for editing files, monitoring jobs, and light shell tasks. **Never run compute here.**
-- **`lnx308`** is a **regular CPU compute node** for standard data reduction, 3D lattice rotations, `nxs_analysis_tools`, high-resolution slices, and LaTeX PDF compilation ("usual scripts"). Python: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`.
+In the CLASSE cluster environment, strictly differentiate between node classes:
+- **`lnx201`** is a **login node** intended exclusively for editing files, monitoring jobs, git operations, and light shell tasks. **Never run compute here.**
+- **`all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*`** are **AVX2-capable batch compute nodes** reserved for raw data reduction and 3D lattice reconstruction via `qsub`.
+- **Interactive Compute Nodes (`interactive.q`)**: For downstream analysis (`nxs_analysis_tools`, diagnostic reciprocal space slicing, linecuts, LaTeX PDF compilation).
 - **`lnx4428`** is a **dedicated CUDA GPU compute node** (NVIDIA Titan RTX, 24 GB VRAM) for machine learning, clustering (`XTEC-GPU`), and PyTorch workloads. Python: `/nfs/chess/sw/qm2_XTEC312/bin/python`. (See `xtec-gpu-analysis` skill).
 
-### Non-Interactive Remote Execution via SSH
-Execute scripts directly on the target compute node using non-interactive SSH commands:
+### Mandatory Interactive Session Protocol
+Do not SSH directly into compute nodes (such as `lnx308`) for interactive analysis. Follow this 3-step protocol:
+1. **Login to gateway**:
+   ```bash
+   ssh <username>@lnx201.classe.cornell.edu
+   ```
+2. **Request an interactive compute session with Grid Engine**:
+   ```bash
+   qrsh -q interactive.q -l mem_free=350G
+   ```
+3. **Execute analysis or activate environment**:
+   ```bash
+   /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python my_analysis_script.py
+   ```
 
+### Non-Interactive Remote GPU Execution (lnx4428)
+For GPU-accelerated XTEC clustering on `lnx4428`, execute non-interactively via SSH:
 ```bash
-# For regular CPU scripts (lnx308)
-ssh lnx308 "cd /path/to/workdir && /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python run_all.py"
-
-# For XTEC GPU scripts (lnx4428)
-ssh -o BatchMode=yes lnx4428 "cd /path/to/workdir && /nfs/chess/sw/qm2_XTEC312/bin/python xtec_run.py"
+ssh -o BatchMode=yes lnx4428 "/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d /path/to/data.nxs -o /path/to/results/ --min-k 2 --max-k 10"
 ```
-
-> [!IMPORTANT]
-> When executing remote SSH commands from the assistant agent, set `BypassSandbox: true` so the SSH connection can authenticate and reach the remote host. Keep command strings simple and prefix-matchable.
 
 ---
 
@@ -43,11 +51,17 @@ Failing to set backend `Agg` can cause `_tkinter.TclError: no display name and n
 
 When working with multiple 3D datasets simultaneously (e.g. comparing two 1000×1000×200 float arrays):
 1. **NeXus Memory Slab Limits (`nxsetmemory`)**:
-   `nexusformat` restricts array allocations exceeding 2,000 MB by default (`NX_MEMORY=2000`). For large 3D reciprocal space reconstructions, raise this limit:
-   ```python
-   import nexusformat.nexus as nx
-   nx.nxsetmemory(20000)  # Increase threshold to 20 GB
-   ```
+   `nexusformat` restricts array allocations exceeding 2,000 MB by default (`NX_MEMORY=2000`). Adjust the slab allocation threshold according to the operational phase:
+   - **Diagnostic Slicing & Linecuts (Downstream Analysis)**: 20 GB (`20000`) is sufficient for extracting 2D slices or 1D linecuts from single pre-reduced datasets:
+     ```python
+     import nexusformat.nexus as nx
+     nx.nxsetmemory(20000)  # 20 GB threshold for interactive slicing
+     ```
+   - **Raw Stack Creation & 3D Reciprocal Volume Reconstruction (Heavy Batch Jobs)**: Requires 100 GB (`100000`) on batch nodes:
+     ```python
+     import nexusformat.nexus as nx
+     nx.nxsetmemory(100000)  # 100 GB threshold for full 3D volume reduction
+     ```
 2. **Slice on Demand**: Load 2D slices from HDF5 instead of reading entire 3D arrays into memory if only a few slices are needed.
 3. **Explicit Garbage Collection**:
    ```python

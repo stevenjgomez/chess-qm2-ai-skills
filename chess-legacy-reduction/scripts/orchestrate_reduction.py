@@ -23,7 +23,12 @@ import pipeline_tracker
 
 
 PYTHON_EXEC = "/nfs/chess/sw/anaconda3_jpcr/bin/python"
-DEFAULT_CODEBASE = "/nfs/chess/id4baux/2026-2/gomez-al-4850-a/StevenGomezAlvarado_Codebase"
+NIGHTLY_PYTHON = "/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python"
+VIS_PYTHON = NIGHTLY_PYTHON if os.path.exists(NIGHTLY_PYTHON) else PYTHON_EXEC
+DEFAULT_CODEBASE = os.environ.get(
+    "CHESS_LEGACY_CODEBASE",
+    os.path.expanduser("~/Documents/automate_legacy_workflow/StevenGomezAlvarado_Codebase")
+)
 
 
 def run_cmd(cmd_list, description):
@@ -155,8 +160,10 @@ def run_fastpath(args):
             "--codebase", args.codebase
         ]
         run_cmd(cmd_orm, f"Headless Orientation Matrix Solving at {warmest_temp}K")
+        clean_temp_val = float(str(warmest_temp).replace("p", "."))
+        clean_temp = int(clean_temp_val) if clean_temp_val.is_integer() else clean_temp_val
         pipeline_tracker.record_orientation_result(
-            processed_root, int(warmest_temp), orm_target, None, verified=False
+            processed_root, clean_temp, orm_target, None, verified=False
         )
     else:
         print(f"Orientation matrix already exists at {orm_target}. Skipping solver.")
@@ -181,7 +188,7 @@ def run_fastpath(args):
     # Step 4: Cross-Sectional Diagnostic Visualization
     vis_script = os.path.join(SCRIPT_DIR, "slice_visualizer.py")
     cmd_vis = [
-        PYTHON_EXEC, "-u", vis_script,
+        VIS_PYTHON, "-u", vis_script,
         "--nxs-file", hkl1_file,
         "--outdir", proc_temp_dir,
         "--hlim", str(args.hlim),
@@ -282,7 +289,7 @@ def process_temperature(temp_str, args, raw_root, processed_root, spec_file, orm
     # Cross-Sectional Diagnostic Visualization
     vis_script = os.path.join(SCRIPT_DIR, "slice_visualizer.py")
     cmd_vis = [
-        PYTHON_EXEC, "-u", vis_script,
+        VIS_PYTHON, "-u", vis_script,
         "--nxs-file", hkl_file,
         "--outdir", proc_temp_dir,
         "--hlim", str(args.hlim),

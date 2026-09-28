@@ -37,13 +37,20 @@ The canonical, authoritative reference skills for `nxs_analysis_tools` and gener
 
 1. **Compute Nodes vs. Login Node**:
    - **Login node (`lnx201`)**: Text editing, job submission, git operations, and lightweight monitoring only. Computing, array manipulation, or figure rendering on `lnx201` is strictly forbidden.
-   - **Compute nodes (`lnx308`, `lnx1033-f1`, `lnx1034-f1`)**: Downstream reciprocal space data analysis using `nxs_analysis_tools` (generating 2D slices with `plot_slice()`, 1D linecuts with `Scissors`, order parameter calculations, skew transformations, and LaTeX summary report compilation) can be executed directly via **non-interactive SSH** on dedicated CPU compute nodes (e.g. `ssh lnx308 /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python ...`) without `qsub`.
+   - **Interactive Analysis Sessions (Mandatory `qrsh`)**:
+     Downstream reciprocal space data analysis using `nxs_analysis_tools` (generating 2D slices with `plot_slice()`, 1D linecuts with `Scissors`, order parameter calculations, skew transformations, and LaTeX summary report compilation) must follow the cluster interactive protocol:
+     1. Login to `lnx201.classe.cornell.edu`
+     2. Request an interactive shell allocation:
+        ```bash
+        qrsh -q interactive.q -l mem_free=350G
+        ```
+     3. Execute analysis using `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`. Do not SSH directly into nodes like `lnx308`.
 2. **Data Reduction vs. Data Analysis Execution Policy**:
    - **Raw Data Reduction Pipeline** (stacking raw CBF frames, ORM basinhopping solving, 3D reciprocal conversion): Heavy, long-running ($>30$ minutes), memory-intensive ($>100\text{ GB}$). Must be submitted via Grid Engine:
      ```bash
      qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 <job>.sh
      ```
-   - **Downstream Data Analysis** (`nxs_analysis_tools`): Fast, operates on already-converted volumes with lazy loading ($O(1)$ RAM). Executed via non-interactive SSH on compute nodes (`lnx308`).
+   - **Downstream Data Analysis** (`nxs_analysis_tools`): Fast, operates on already-converted volumes with lazy loading ($O(1)$ RAM). Executed inside interactive `qrsh` sessions.
 3. **Headless Execution**:
    - Always invoke `matplotlib.use("Agg")` before importing `matplotlib.pyplot`.
 4. **Automated LaTeX Summaries**:
@@ -65,21 +72,24 @@ The canonical, authoritative reference skills for `nxs_analysis_tools` and gener
 - **NeXus Slab Limit**: Raise the memory limit upon import:
   ```python
   import nexusformat.nexus as nx
-  nx.nxsetmemory(20000)  # 20 GB
+  nx.nxsetmemory(20000)  # 20 GB (sufficient for 2D slicing/linecuts; use 100000 for 3D reconstruction)
   ```
 
-### 3.2 Array Axes vs. Reciprocal Space Planes
-With `use_nxlink=True`, NXRefine datasets preserve native C-contiguous axes:
-`data.nxaxes == ['Ql', 'Qk', 'Qh']` (shape `(N_l, N_k, N_h)`).
-- **Physical Planes require fixing the perpendicular axis**:
-  - **$HK$ Plane**: Hold $L$ ($Q_l$) constant (e.g. $L = 0.0$). Free axes are $H, K$.
-    $\rightarrow$ **Slice Axis 0**: `data[0.0, :, :]`
-  - **$HL$ Plane**: Hold $K$ ($Q_k$) constant (e.g. $K = 0.0$). Free axes are $H, L$.
-    $\rightarrow$ **Slice Axis 1**: `data[:, 0.0, :]`
-  - **$KL$ Plane**: Hold $H$ ($Q_h$) constant (e.g. $H = 0.0$). Free axes are $K, L$.
-    $\rightarrow$ **Slice Axis 2**: `data[:, :, 0.0]`
-- > [!WARNING]
-  > Fixing $H = 0.0$ ($Q_h = 0.0$) eliminates $H$ and yields the **$KL$ plane**, NOT the $HK$ plane!
+### 3.2 Array Axes vs. Reciprocal Space Planes: Format Comparison
+A reciprocal lattice plane is defined by **fixing the coordinate perpendicular to the plane**:
+- **$HK$ Plane**: Hold $L$ ($Q_l$) constant. Free axes are $H, K$.
+- **$HL$ Plane**: Hold $K$ ($Q_k$) constant. Free axes are $H, L$.
+- **$KL$ Plane**: Hold $H$ ($Q_h$) constant. Free axes are $K, L$.
+
+Because NXRefine and Legacy CHESS data structures use different axis ordering conventions, slice axes and `Scissors` coordinate orders differ:
+
+| Format | Dataset Axes | $HK$ Slice ($L=\text{const}$) | $HL$ Slice ($K=\text{const}$) | $KL$ Slice ($H=\text{const}$) | `Scissors` Tuple Order |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **NXRefine** (`use_nxlink=True`) | `['Ql', 'Qk', 'Qh']` (shape `(N_l, N_k, N_h)`) | Axis 0 (`data[0.0, :, :]`) | Axis 1 (`data[:, 0.0, :]`) | Axis 2 (`data[:, :, 0.0]`) | `(L, K, H)` |
+| **Legacy CHESS** (`hkli.nxs`) | `['H', 'K', 'L']` (shape `(N_h, N_k, N_l)`) | Axis 2 (`data[:, :, 0.0]`) | Axis 1 (`data[:, 0.0, :]`) | Axis 0 (`data[0.0, :, :]`) | `(H, K, L)` |
+
+> [!WARNING]
+> In NXRefine, fixing Axis 2 ($Q_h = 0.0$) eliminates $H$ and yields the **$KL$ plane**, NOT the $HK$ plane! Conversely, in Legacy CHESS, fixing Axis 0 ($H = 0.0$) eliminates $H$ and yields the **$KL$ plane**. Always check `data.nxaxes` before slicing!
 
 ### 3.3 Float vs. Integer Indexing
 `nexusformat.nexus.NXdata` strictly distinguishes between integer and float indices:
@@ -88,11 +98,17 @@ With `use_nxlink=True`, NXRefine datasets preserve native C-contiguous axes:
 - **Rule**: Always use float literals (`0.0`, `1.5`) when selecting reciprocal cuts.
 
 ### 3.4 Scissors & Linecut Coordinates
-`Scissors.cut_data()` maps coordinates positionally to `data.nxaxes`. Under `use_nxlink=True`, `center` and `window` tuples must follow $(L, K, H)$ order:
-```python
-# center and window ordered as (L, K, H):
-scissors.cut_data(center=(0.0, 0.0, -0.5), window=(0.2, 0.2, 0.25))
-```
+`Scissors.cut_data()` maps coordinates positionally to `data.nxaxes`:
+- **For NXRefine** (`['Ql', 'Qk', 'Qh']`), `center` and `window` tuples must follow **$(L, K, H)$** order:
+  ```python
+  # center and window ordered as (L, K, H):
+  scissors.cut_data(center=(0.0, 0.0, -0.5), window=(0.2, 0.2, 0.25))
+  ```
+- **For Legacy CHESS** (`['H', 'K', 'L']`), `center` and `window` tuples must follow **$(H, K, L)$** order:
+  ```python
+  # center and window ordered as (H, K, L):
+  scissors.cut_data(center=(-0.5, 0.0, 0.0), window=(0.25, 0.2, 0.2))
+  ```
 
 ### 3.5 Temperature Series Discovery & Normalization
 - Temperature keys can appear as integers (`15`), floats (`15.5`), or filesystem string notation (`'15p5'`).
@@ -135,4 +151,10 @@ scissors.cut_data(center=(0.0, 0.0, -0.5), window=(0.2, 0.2, 0.25))
 
 ---
 
-*Detailed cluster reference:* [Cluster Execution Guide](./references/cluster_execution.md)
+## 4. Beamline Lifecycle Integration & Sister Skills
+
+$$\text{Raw CBFs} \xrightarrow{\text{chess-legacy-reduction}} \text{3D Volumes} \xrightarrow{\text{reciprocal-space-analysis}} \text{Diagnostic Slicing} \xrightarrow{\text{xtec-gpu-analysis}} \text{4D Phase Clustering}$$
+
+- **Upstream Data Reduction**: For converting raw Pilatus CBF detector frames into 3D NeXus reciprocal space volumes (`1rot_hkli.nxs`, `3rot_hkli.nxs`), consult the [`chess-legacy-reduction`](../chess-legacy-reduction/SKILL.md) skill.
+- **Downstream Phase Clustering**: For clustering temperature-series reciprocal space datasets with GPU acceleration (PyTorch / `torchgmm`), consult the [`xtec-gpu-analysis`](../xtec-gpu-analysis/SKILL.md) skill.
+- **Cluster Execution Details**: See the [Cluster Execution Guide](./references/cluster_execution.md) for interactive `qrsh` sessions, headless matplotlib, and memory management.

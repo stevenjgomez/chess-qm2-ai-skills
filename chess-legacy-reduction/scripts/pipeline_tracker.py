@@ -110,6 +110,18 @@ def record_orientation_result(sample_root, ref_temp, orm_file, mean_dev, verifie
     save_status(sample_root, status)
 
 
+def verify_orientation(sample_root):
+    """Mark the orientation matrix as verified by user in pipeline_status.json."""
+    status = load_status(sample_root)
+    if not status:
+        raise ValueError(f"No status file found at {sample_root}")
+    status["orientation"]["status"] = "VERIFIED"
+    status["orientation"]["verified_by_user"] = True
+    status["orientation"]["verified_at"] = datetime.now().isoformat()
+    save_status(sample_root, status)
+    print(f"Orientation matrix successfully marked as VERIFIED for {status.get('sample_id', 'sample')} at {sample_root}")
+
+
 def print_summary(sample_root):
     """Print readable progress summary."""
     status = load_status(sample_root)
@@ -143,7 +155,14 @@ def print_summary(sample_root):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        print_summary(sys.argv[1])
-    else:
-        print("Usage: python pipeline_tracker.py <processed_sample_root_dir>")
+    import argparse
+    parser = argparse.ArgumentParser(description="Pipeline Status Ledger and Tracker for CHESS Legacy Reduction")
+    parser.add_argument("sample_root", help="Processed sample root directory (containing pipeline_status.json)")
+    parser.add_argument("--verify-orm", "-v", action="store_true",
+                        help="Record human-in-the-loop verification of the orientation matrix")
+    args = parser.parse_args()
+
+    sample_root = os.path.abspath(args.sample_root)
+    if args.verify_orm:
+        verify_orientation(sample_root)
+    print_summary(sample_root)

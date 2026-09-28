@@ -12,7 +12,7 @@ XTEC automates the discovery of phase transitions, charge density waves (CDWs), 
 [3D NeXus Series across Temperatures]
                  │
                  ▼
-  [Phase 0: 4D Dataset Compilation (lnx308 CPU)]
+  [Phase 0: 4D Dataset Compilation (Interactive CPU qrsh)]
   ├── TempDependence.find_temperatures()
   ├── TempDependence.load_datasets() (auto-detect NXRefine vs CHESS)
   └── TempDependence.to_xtec() -> xtec_data.nxs
@@ -50,14 +50,14 @@ XTEC-GPU algorithms require a 4D `NXdata` structure:
 
 ### 2.1 Automated Helper Script (`scripts/generate_xtec_input.py`)
 
-Run the bundled utility remotely on CPU compute node `lnx308`:
+Run the bundled utility in an interactive session (`qrsh -q interactive.q -l mem_free=350G` from `lnx201`):
 
 ```bash
 # Auto-detects format (NXRefine or Legacy CHESS) and writes xtec_data.nxs
-ssh -o BatchMode=yes lnx308 "/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python \
-  /home/sgomezalvarado/.gemini/config/skills/xtec-gpu-analysis/scripts/generate_xtec_input.py \
+/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python \
+  $HOME/.gemini/config/skills/xtec-gpu-analysis/scripts/generate_xtec_input.py \
   --sample-dir /path/to/sample \
-  --output /path/to/sample/xtec_data.nxs"
+  --output /path/to/sample/xtec_data.nxs
 ```
 
 #### CLI Flags:
@@ -116,14 +116,14 @@ Once `xtec_data.nxs` is available, execute clustering subcommands on GPU node `l
 
 ```bash
 # 1. Direct voxel clustering (Mode d)
-PYTHONPATH=src /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d data.nxs -o results/ -n 13 --rescale mean
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d data.nxs -o results/ -n 13 --rescale mean
 
 # 2. Peak-averaged clustering (Mode s)
-PYTHONPATH=src /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-s data.nxs -o results/ -n 13
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-s data.nxs -o results/ -n 13
 
 # 3. BIC sweeps for model selection
-PYTHONPATH=src /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-d data.nxs -o bic_d/ --min-nc 2 --max-nc 14
-PYTHONPATH=src /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-s data.nxs -o bic_s/ --min-nc 2 --max-nc 14
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-d data.nxs -o bic_d/ --min-nc 2 --max-nc 14
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-s data.nxs -o bic_s/ --min-nc 2 --max-nc 14
 ```
 
 ---
@@ -162,43 +162,19 @@ PYTHONPATH=src /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-s data.nxs -o bic_s/ -
 
 ---
 
-## 5. Re-Plotting Existing Outputs
-
-When visualization styles are updated, existing `results.h5` files can be re-rendered without re-running the heavy GMM EM training loop using `scripts/replot_figures.py`.
-
-```python
-import h5py
-from xtec_gpu.xtec_cli import _plot_qmap, _plot_trajectories, _plot_avg_intensities
-
-with h5py.File("results.h5", "r") as f:
-    cluster_assigns = f["cluster_assignments"][:]
-    pixel_assigns = f["pixel_assignments"][:]
-    Data_ind = f["data_indices"][:]
-    cluster_means = f["cluster_means"][:]
-    cluster_covs = f["cluster_covariances"][:]
-    Data_thresh = f["data_thresholded"][:]
-
-nc = len(cluster_means)
-_plot_qmap(data, Data_ind, pixel_assigns, nc, output_dir)
-_plot_trajectories(data, cluster_means, cluster_covs, nc, "mean", output_dir)
-_plot_avg_intensities(data, Data_thresh, cluster_assigns, nc, output_dir)
-```
-
----
-
-## 6. Report Integrity & Absolute Image Linking
+## 5. Report Integrity & Absolute Image Linking
 
 When maintaining `report.md`:
 - **Never use relative image links** (e.g. `./workflow_runs/...`), because reports symlinked at the workspace root or viewed in separate tools will break.
 - **Always use absolute paths**:
   ```markdown
-  ![Reciprocal Space Q-Map](/home/sgomezalvarado/XTEC_CUDA/benchmark_test/workflow_runs/srn0_benchmark/final_run/xtec_d/qmap.png)
+  ![Reciprocal Space Q-Map](/path/to/results/xtec_d/qmap.png)
   ```
 - **Map Indices**: Provide a clear table cross-referencing 1-indexed plot labels (`Cluster 1` to `Cluster K`) with 0-indexed HDF5 datasets in `results.h5`.
 
 ---
 
-## 7. Mandatory Data Safety Policy
+## 6. Mandatory Data Safety Policy
 
 > [!CAUTION]
 > **NEVER delete any `.nxs` files**. If a file already exists, reuse it or use non-destructive suffixing (`xtec_data_1.nxs`). Never issue `rm` or `os.remove` on any `.nxs` file.

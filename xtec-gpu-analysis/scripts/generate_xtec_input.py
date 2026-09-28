@@ -15,7 +15,7 @@ Strictly enforces CLASSE data protection policies: existing .nxs files will NOT
 be overwritten unless explicitly commanded with --force.
 
 Target Environment:
-  Host: CPU Compute Node (e.g. lnx308)
+  Host: Interactive CPU Node (via qrsh -q interactive.q -l mem_free=350G from lnx201)
   Python: /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python
 """
 
@@ -29,27 +29,35 @@ import numpy as np
 def detect_legacy_file_ending(sample_dir):
     """
     Auto-detect the most appropriate file ending pattern for legacy CHESS datasets.
-    Prioritizes 3-rotation reconstructions, then 1-rotation, then generic hkli.
+    Prioritizes 3-rotation reconstructions, then 1-rotation, then generic hkli/transform.
+    Handles automatic integer suffixing (e.g. 1rot_hkli_1.nxs, 3rot_hkli_2.nxs)
+    by selecting the highest suffix present.
     """
-    candidates = ["3rot_hkli.nxs", "1rot_hkli.nxs", "hkli.nxs", "transform.nxs"]
-    found_endings = set()
+    pattern = re.compile(r".*?(3rot_hkli|1rot_hkli|hkli|transform)(?:_(\d+))?\.nxs$")
+    priority = {"3rot_hkli": 3, "1rot_hkli": 2, "hkli": 1, "transform": 0}
+    found_matches = []
 
     for item in os.listdir(sample_dir):
         item_path = os.path.join(sample_dir, item)
         if os.path.isdir(item_path):
             try:
-                files = os.listdir(item_path)
-                for c in candidates:
-                    if any(f.endswith(c) for f in files):
-                        found_endings.add(c)
+                for f in os.listdir(item_path):
+                    m = pattern.match(f)
+                    if m:
+                        rtype = m.group(1)
+                        suffix_str = m.group(2)
+                        suffix_int = int(suffix_str) if suffix_str is not None else 0
+                        ending = f"{rtype}_{suffix_str}.nxs" if suffix_str is not None else f"{rtype}.nxs"
+                        found_matches.append((priority[rtype], suffix_int, ending))
             except OSError:
                 continue
 
-    for c in candidates:
-        if c in found_endings:
-            return c
+    if not found_matches:
+        return "hkli.nxs"
 
-    return "hkli.nxs"
+    # Sort descending by priority, then suffix number
+    found_matches.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return found_matches[0][2]
 
 
 def parse_temperature_list(temp_str):

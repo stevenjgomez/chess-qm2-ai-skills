@@ -45,21 +45,29 @@ def get_reciprocal_parameters(unit_cell_str):
         return 1.0, 1.0, 1.0, 90.0, 90.0, 90.0
 
 
-def extract_slice(counts, coord_array, axis_idx, thickness=0.05):
+def extract_lazy_slice(counts_field, coord_array, axis_idx, center=0.0, thickness=0.05):
     """
-    Extract a 2D slice by averaging over a narrow slice around zero along the specified axis.
+    Extract a 2D slice from an NXfield/HDF5 dataset lazily by indexing only the required hyperslab.
+    Avoids reading the entire 3D volume into memory.
     """
-    mask = np.abs(coord_array) <= thickness
-    if not np.any(mask):
-        idx = int(np.argmin(np.abs(coord_array)))
-        if axis_idx == 0:
-            return counts[idx, :, :]
-        elif axis_idx == 1:
-            return counts[:, idx, :]
-        else:
-            return counts[:, :, idx]
+    mask = np.abs(coord_array - center) <= thickness
+    indices = np.where(mask)[0]
+    if len(indices) == 0:
+        indices = np.array([int(np.argmin(np.abs(coord_array - center)))])
+
+    min_i, max_i = int(indices[0]), int(indices[-1])
+    slice_span = slice(min_i, max_i + 1)
+    rel_indices = indices - min_i
+
+    if axis_idx == 0:
+        slab = counts_field[slice_span, :, :].nxdata
+        return np.nanmean(np.take(slab, rel_indices, axis=0), axis=0) if len(indices) > 1 else slab[0, :, :]
+    elif axis_idx == 1:
+        slab = counts_field[:, slice_span, :].nxdata
+        return np.nanmean(np.take(slab, rel_indices, axis=1), axis=1) if len(indices) > 1 else slab[:, 0, :]
     else:
-        return np.nanmean(np.take(counts, np.where(mask)[0], axis=axis_idx), axis=axis_idx)
+        slab = counts_field[:, :, slice_span].nxdata
+        return np.nanmean(np.take(slab, rel_indices, axis=2), axis=2) if len(indices) > 1 else slab[:, :, 0]
 
 
 def main():
@@ -68,6 +76,9 @@ def main():
     parser.add_argument("--outdir", default=None, help="Output directory for PNGs (defaults to nxs file dir)")
     parser.add_argument("--unit-cell", default=None, help="Real-space unit cell string 'a,b,c,alpha,beta,gamma'")
     parser.add_argument("--thickness", type=float, default=0.05, help="Integration slice half-width in r.l.u.")
+    parser.add_argument("--h-center", type=float, default=0.0, help="Center H coordinate for KL slice (default: 0.0)")
+    parser.add_argument("--k-center", type=float, default=0.0, help="Center K coordinate for HL slice (default: 0.0)")
+    parser.add_argument("--l-center", type=float, default=0.0, help="Center L coordinate for HK slice (default: 0.0)")
     parser.add_argument("--hlim", type=float, default=None, help="In-plane H axis limit +/-")
     parser.add_argument("--klim", type=float, default=None, help="In-plane K axis limit +/-")
     parser.add_argument("--llim", type=float, default=None, help="Out-of-plane L axis limit +/-")
@@ -100,7 +111,7 @@ def main():
     print(f"Reciprocal angles : alpha*={alpha_star:.1f}°, beta*={beta_star:.1f}°, gamma*={gamma_star:.1f}°")
     print(f"Physical aspect corrections: b*/a*={b_star/a_star:.4f} (HK), c*/a*={c_star/a_star:.4f} (HL), c*/b*={c_star/b_star:.4f} (KL)")
 
-    print(f"Loading reciprocal space volume: {nxs_path}")
+    print(f"Loading reciprocal space volume (lazy structure): {nxs_path}")
     nxsetmemory(100000)
     nx_obj = nxload(nxs_path)
 
@@ -111,18 +122,18 @@ def main():
     H = np.asarray(H_field.nxdata)
     K = np.asarray(K_field.nxdata)
     L = np.asarray(L_field.nxdata)
-    counts = data_entry.counts.nxdata
+    counts_field = data_entry.counts
 
-    print(f"Volume loaded. Dimensions: H={len(H)}, K={len(K)}, L={len(L)}")
+    print(f"Volume linked. Dimensions: H={len(H)}, K={len(K)}, L={len(L)}")
 
     h_bounds = (-args.hlim, args.hlim) if args.hlim is not None else None
     k_bounds = (-args.klim, args.klim) if args.klim is not None else None
     l_bounds = (-args.llim, args.llim) if args.llim is not None else None
 
-    # Extract 2D slices
-    hk_slice = extract_slice(counts, L, axis_idx=2, thickness=args.thickness)
-    hl_slice = extract_slice(counts, K, axis_idx=1, thickness=args.thickness)
-    kl_slice = extract_slice(counts, H, axis_idx=0, thickness=args.thickness)
+    # Extract 2D slices lazily from HDF5
+    hk_slice = extract_lazy_slice(counts_field, L, axis_idx=2, center=args.l_center, thickness=args.thickness)
+    hl_slice = extract_lazy_slice(counts_field, K, axis_idx=1, center=args.k_center, thickness=args.thickness)
+    kl_slice = extract_lazy_slice(counts_field, H, axis_idx=0, center=args.h_center, thickness=args.thickness)
 
     # Wrap in 2D NXdata structures for plot_slice()
     nx_hk = NXdata(NXfield(hk_slice, name="counts"), (H_field, K_field))
@@ -162,7 +173,7 @@ def main():
         vmax=c_max,
         xlim=h_bounds,
         ylim=k_bounds,
-        title=f"HK Plane (L = 0, skew={gamma_star:.0f}°)",
+        title=f"HK Plane (L = {args.l_center:g}, skew={gamma_star:.0f}°)",
         cmap=args.cmap,
         cbar=True
     )
@@ -184,7 +195,7 @@ def main():
         vmax=c_max,
         xlim=h_bounds,
         ylim=l_bounds,
-        title=f"HL Plane (K = 0, skew={beta_star:.0f}°)" if beta_star != 90.0 else "HL Plane (K = 0)",
+        title=f"HL Plane (K = {args.k_center:g}, skew={beta_star:.0f}°)" if beta_star != 90.0 else f"HL Plane (K = {args.k_center:g})",
         cmap=args.cmap,
         cbar=True
     )
@@ -206,7 +217,7 @@ def main():
         vmax=c_max,
         xlim=k_bounds,
         ylim=l_bounds,
-        title=f"KL Plane (H = 0, skew={alpha_star:.0f}°)" if alpha_star != 90.0 else "KL Plane (H = 0)",
+        title=f"KL Plane (H = {args.h_center:g}, skew={alpha_star:.0f}°)" if alpha_star != 90.0 else f"KL Plane (H = {args.h_center:g})",
         cmap=args.cmap,
         cbar=True
     )
@@ -221,16 +232,16 @@ def main():
     summary_fig, axes = plt.subplots(1, 3, figsize=(18, 5), dpi=200)
 
     plot_slice(nx_hk, skew_angle=gamma_star, ax=axes[0], logscale=True, vmin=c_min, vmax=c_max,
-               xlim=h_bounds, ylim=k_bounds, title=f"HK Plane (skew={gamma_star:.0f}°)", cmap=args.cmap, cbar=False)
+               xlim=h_bounds, ylim=k_bounds, title=f"HK (L={args.l_center:g}, skew={gamma_star:.0f}°)", cmap=args.cmap, cbar=False)
     axes[0].set_aspect(axes[0].get_aspect() * (b_star / a_star))
 
     plot_slice(nx_hl, skew_angle=beta_star, ax=axes[1], logscale=True, vmin=c_min, vmax=c_max,
-               xlim=h_bounds, ylim=l_bounds, title=f"HL Plane (skew={beta_star:.0f}°)" if beta_star != 90.0 else "HL Plane",
+               xlim=h_bounds, ylim=l_bounds, title=f"HL (K={args.k_center:g}, skew={beta_star:.0f}°)" if beta_star != 90.0 else f"HL (K={args.k_center:g})",
                cmap=args.cmap, cbar=False)
     axes[1].set_aspect(axes[1].get_aspect() * (c_star / a_star))
 
     im_last = plot_slice(nx_kl, skew_angle=alpha_star, ax=axes[2], logscale=True, vmin=c_min, vmax=c_max,
-                         xlim=k_bounds, ylim=l_bounds, title=f"KL Plane (skew={alpha_star:.0f}°)" if alpha_star != 90.0 else "KL Plane",
+                         xlim=k_bounds, ylim=l_bounds, title=f"KL (H={args.h_center:g}, skew={alpha_star:.0f}°)" if alpha_star != 90.0 else f"KL (H={args.h_center:g})",
                          cmap=args.cmap, cbar=False)
     axes[2].set_aspect(axes[2].get_aspect() * (c_star / b_star))
 
