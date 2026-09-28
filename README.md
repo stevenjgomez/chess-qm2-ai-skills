@@ -9,8 +9,8 @@ A modular collection of domain-specific scientific computing and synchrotron ski
 | Skill | Directory | Description & Capabilities |
 | :--- | :--- | :--- |
 | **`chess-legacy-reduction`** | [`chess-legacy-reduction/`](./chess-legacy-reduction/) | **Autonomous Beamline Reduction Pipeline**: Automates stacking raw Pilatus 6M CBF detector frames, headless orientation matrix (ORM) solving via `scipy.optimize.basinhopping`, 3D reciprocal space HKL conversion (`1rot` and `3rot`), cross-sectional plane visualization ($(HK0)$, $(H0L)$, $(0KL)$), human-in-the-loop verification gates, and Grid Engine (`qsub`) batch scheduling across AVX2-capable CLASSE nodes. Includes a turnkey Python CLI suite in `scripts/`. |
-| **`reciprocal-space-analysis`** | [`reciprocal-space-analysis/`](./reciprocal-space-analysis/) | **3D Reciprocal Space & NeXus Analysis**: Reconstruction, indexing, alignment, and slicing of 3D reciprocal space volumes (NeXus/HDF5) via `nxs_analysis_tools`. Enforces skew projections for non-orthogonal/hexagonal lattices, multi-dataset linecuts, and cluster execution etiquette. |
-| **`xtec-gpu-analysis`** | [`xtec-gpu-analysis/`](./xtec-gpu-analysis/) | **GPU Temperature Clustering (XTEC-GPU)**: High-throughput clustering of temperature-series scattering datasets using PyTorch and `torchgmm`. Features automated 4D NeXus compilation from 3D volumes (NXRefine and legacy CHESS) via `TempDependence.to_xtec()`, enforces cluster node etiquette (interactive CPU nodes vs GPU node `lnx4428`), discrete Q-map visualization, and automated Markdown reporting. Includes turnkey input generation CLI in `scripts/`. |
+| **`reciprocal-space-analysis`** | [`reciprocal-space-analysis/`](./reciprocal-space-analysis/) | **3D Reciprocal Space & NeXus Analysis**: Reconstruction, indexing, alignment, and slicing of 3D reciprocal space volumes (NeXus/HDF5) via `nxs_analysis_tools`. Enforces skew projections for non-orthogonal/hexagonal lattices, multi-dataset linecuts, and interactive cluster execution etiquette (`qrsh`). |
+| **`xtec-gpu-analysis`** | [`xtec-gpu-analysis/`](./xtec-gpu-analysis/) | **GPU Temperature Clustering (XTEC-GPU)**: High-throughput clustering of temperature-series scattering datasets using PyTorch and `torchgmm`. Features automated 4D NeXus compilation from 3D volumes (NXRefine and legacy CHESS) via `TempDependence.to_xtec()`, enforces cluster node etiquette (interactive CPU nodes via `qrsh` vs GPU node `lnx4428`), discrete Q-map visualization, and automated Markdown reporting. Includes turnkey input generation CLI in `scripts/`. |
 
 ---
 
@@ -36,23 +36,52 @@ Once installed, Antigravity automatically discovers and progressively mounts eac
 
 ## Cluster & Beamline Etiquette
 
-All skills in this suite strictly follow CLASSE compute cluster etiquette and beamline constraints:
+All skills in this suite strictly adhere to CLASSE compute cluster etiquette, Grid Engine allocation rules, and beamline hardware constraints.
 
-1. **Execution Modes: Data Reduction (`qsub`) vs. Interactive Analysis (`qrsh`)**:
-   - **Data Reduction Pipeline (Mandatory `qsub`)**: Raw Pilatus CBF frame stacking (10–35+ GB per rotation), headless ORM basinhopping, and 3D reciprocal conversions consume massive memory bandwidth and RAM. They **must** be submitted as SGE batch jobs (see [`example_job_scripts/`](./example_job_scripts/)):
+### Node Topology & Execution Protocols
+
+| Node Class | Host / Queue Target | Role & Hardware Profile | Permitted Execution Protocol |
+| :--- | :--- | :--- | :--- |
+| **Login Gateway** | `lnx201.classe.cornell.edu` | Shell sessions, file editing, git, job submission. **No compute.** | Interactive login via `ssh <user>@lnx201.classe.cornell.edu`. Never run compute, heavy array manipulation, or slicing here. |
+| **Batch Reduction Nodes** | `all.q@lnx307*`<br>`all.q@lnx311*`<br>`all.q@lnx312*`<br>`all.q@lnx313*` | Heavy raw reduction, Pilatus CBF frame stacking (10–35+ GB/rotation), ORM basinhopping, 3D volume reconstruction. Verified AVX2 CPU instruction set for `libhkl.so`. | **Mandatory Grid Engine batch submission (`qsub`)** using bash wrapper scripts (see [`example_job_scripts/`](./example_job_scripts/)). |
+| **Interactive Analysis Nodes** | `interactive.q` (Grid Engine) | Downstream analysis (`nxs_analysis_tools`), 2D reciprocal slicing (`plot_slice`), 1D linecuts (`Scissors`), 4D XTEC input compilation (`to_xtec`), LaTeX compilation. | **Mandatory 3-step `qrsh` interactive session from `lnx201`** (see below). Direct SSH into compute nodes (such as `lnx308`) is strictly prohibited. |
+| **CUDA GPU Compute Node** | `lnx4428.classe.cornell.edu` | GPU-accelerated machine learning, XTEC-GPU clustering, PyTorch, `torchgmm`. **NVIDIA Titan RTX (24 GB VRAM).** | Non-interactive SSH execution via `/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu`. |
+
+---
+
+### Mandatory Interactive Analysis Protocol (`qrsh`)
+
+> [!IMPORTANT]
+> **Never SSH directly into compute nodes** (e.g. `ssh lnx308` is prohibited by facility policy to prevent host overloading).
+> All interactive work, downstream visualization, and 4D dataset compilation must follow this 3-step workflow:
+>
+> 1. **Connect to the login gateway**:
+>    ```bash
+>    ssh <username>@lnx201.classe.cornell.edu
+>    ```
+> 2. **Allocate an interactive compute session with Grid Engine**:
+>    ```bash
+>    qrsh -q interactive.q -l mem_free=350G
+>    ```
+> 3. **Run your analysis or activate the appropriate Python environment**:
+>    ```bash
+>    /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python my_script.py
+>    ```
+
+---
+
+### Operational Guidelines
+
+1. **Batch Reduction Pipeline (`qsub`)**:
+   - Heavy data processing (raw Pilatus CBF frame stacking, headless ORM basinhopping, and 3D reciprocal conversions) consumes massive memory bandwidth and RAM. They **must** be submitted via `qsub` targeting the AVX2 pool:
      ```bash
      qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 <job_script>.sh
      ```
-   - **Downstream Data Analysis (Interactive `qrsh`)**: Downstream tasks using `nxs_analysis_tools` (generating diagnostic 2D slices with `plot_slice()`, 1D linecuts with `Scissors`, 4D XTEC input compilation, and LaTeX compilation) operate on converted volumes using lazy loading ($O(1)$ RAM). To maintain cluster stability, do **not** SSH directly into compute nodes like `lnx308`. Follow the standard 3-step interactive session protocol:
-     1. Login to gateway: `ssh <user>@lnx201.classe.cornell.edu`
-     2. Request interactive session: `qrsh -q interactive.q -l mem_free=350G`
-     3. Execute analysis using `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`
-   - **Login Node (`lnx201`)**: Strictly for text editing, git, and job submission. Computing or figure rendering on `lnx201` is strictly forbidden.
-2. **Two-Stage Node Routing for XTEC-GPU**:
+2. **Two-Stage Routing for XTEC-GPU Workflows**:
    - **Stage 0 (Input Compilation)**: Executed in an interactive CPU session (`qrsh -q interactive.q -l mem_free=350G`) using `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python` to compile 3D datasets into a 4D `NXdata` volume via `generate_xtec_input.py` / `TempDependence.to_xtec()`.
    - **Stages 1–4 (ML Preprocessing & Clustering)**: Executed exclusively on dedicated CUDA GPU node `lnx4428` (NVIDIA Titan RTX) using `/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu`.
 3. **AVX2 Vector Instruction Enforcing**:
-   - The beamline's compiled C library (`libhkl.so`) requires AVX2 vector instructions. Jobs dispatched to older nodes (e.g. `lnx327`) crash with `SIGILL` (Exit Code `-4`). Queue targets are restricted to verified AVX2 hosts (`lnx307`, `lnx311`, `lnx312`, `lnx313`).
+   - The beamline's compiled C library (`libhkl.so`) requires AVX2 vector instructions. Jobs dispatched to older nodes (e.g. `lnx327`) crash with `SIGILL` (Exit Code `-4`). Queue targets are strictly restricted to verified AVX2 hosts (`lnx307`, `lnx311`, `lnx312`, `lnx313`).
 4. **Designated Python Environments**:
    - **Legacy Reduction Pipeline**: `/nfs/chess/sw/anaconda3_jpcr/bin/python` (shared beamline environment, frozen/never modified).
    - **Modern Analysis & Visualization**: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python` (hosts `nxs_analysis_tools`, PyTorch, and `plot_slice()`).
