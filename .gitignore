@@ -21,6 +21,7 @@ __pycache__/
 *.tmp
 *.bak
 *~
+review.md
 
 # Operating System & Editor files
 .DS_Store
