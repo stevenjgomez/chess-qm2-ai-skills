@@ -102,3 +102,6 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 ### Facility GPU Policy
 - Grid Engine dynamically manages allocation of the Titan RTX accelerator on `lnx4428` via the `cuda_free=1` resource directive.
 - Direct interactive GPU compute or executing outside Grid Engine without `-l cuda_free=1` is strictly forbidden.
+
+### Non-Interactive SSH Authentication
+To enable AI assistant tools and automated workflows to interact with `lnx201` without stalling on password or Duo prompts, configure your SSH keys or multiplexing following the [SSH Authentication Setup Guide](../../README.md#ssh-remote-access--authentication-setup-suggested-approach).

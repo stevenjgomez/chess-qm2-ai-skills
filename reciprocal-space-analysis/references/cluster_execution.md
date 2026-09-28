@@ -37,6 +37,12 @@ Inside the SGE script (`xtec_job.sh`):
 /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d /path/to/data.nxs -o /path/to/results/ --min-k 2 --max-k 14
 ```
 
+### SSH Remote Access & Non-Interactive Authentication
+To enable AI assistant tools and automated workflows to connect to `lnx201` without stalling on password or Duo 2FA prompts:
+- Configure an Ed25519 key pair with macOS Keychain (`UseKeychain yes`) or `ssh-agent`.
+- Alternatively, configure SSH Connection Multiplexing (`ControlMaster`) or Kerberos ticket delegation (`kinit`).
+- See the [SSH Authentication Setup Guide](../../README.md#ssh-remote-access--authentication-setup-suggested-approach) in the repository root for step-by-step instructions.
+
 ---
 
 ## 2. Headless Matplotlib Configuration

@@ -34,6 +34,82 @@ Once installed, Antigravity automatically discovers and progressively mounts eac
 
 ---
 
+## SSH Remote Access & Authentication Setup (Suggested Approach)
+
+To allow automated assistant tools, job monitoring (`qstat`), and remote analysis commands to run non-interactively without stalling on password or two-factor authentication prompts, configure SSH access from your local machine to the CLASSE login gateway (`lnx201.classe.cornell.edu`).
+
+Different users and institutions maintain different security policies and authentication pathways. Below is the **recommended approach**, followed by alternative pathways.
+
+### Recommended Pathway: Ed25519 Key Pair with Keychain / Agent
+
+1. **Generate a dedicated SSH key pair** (on your local machine):
+   ```bash
+   ssh-keygen -t ed25519 -C "<user>@classe" -f ~/.ssh/id_ed25519_classe
+   ```
+   *(Setting a passphrase on the private key is strongly recommended for security).*
+
+2. **Copy the public key to CLASSE**:
+   ```bash
+   ssh-copy-id -i ~/.ssh/id_ed25519_classe.pub <username>@lnx201.classe.cornell.edu
+   ```
+   *(Authenticate once interactively with your CLASSE password and Duo 2FA).*
+
+3. **Configure `~/.ssh/config` on your local machine**:
+   ```ssh-config
+   Host lnx201.classe.cornell.edu lnx201
+     HostName lnx201.classe.cornell.edu
+     User <username>
+     IdentityFile ~/.ssh/id_ed25519_classe
+     IdentitiesOnly yes
+     AddKeysToAgent yes
+     UseKeychain yes  # macOS: saves passphrase in Apple Keychain
+   ```
+
+4. **Load the key into your SSH agent / Keychain (one-time)**:
+   - On **macOS**:
+     ```bash
+     ssh-add --apple-use-keychain ~/.ssh/id_ed25519_classe
+     ```
+   - On **Linux**:
+     ```bash
+     ssh-add ~/.ssh/id_ed25519_classe
+     ```
+
+5. **Verify non-interactive login**:
+   ```bash
+   ssh lnx201 "echo 'Connected successfully to ' \$(hostname) ' as ' \$(whoami)"
+   ```
+
+### Alternative Authentication Pathways
+
+- **Pathway B: SSH Connection Multiplexing (`ControlMaster`)**:
+  If institutional policy requires Duo 2FA on every distinct handshake and restricts standalone public key authentication, configure connection multiplexing. You authenticate once in an interactive terminal, and all subsequent background or assistant commands share the open connection:
+  ```ssh-config
+  Host lnx201.classe.cornell.edu lnx201
+    HostName lnx201.classe.cornell.edu
+    User <username>
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h:%p
+    ControlPersist 4h
+  ```
+  *(Create the socket directory with `mkdir -p ~/.ssh/sockets` and connect once via `ssh lnx201` in your terminal).*
+
+- **Pathway C: Kerberos / GSSAPI Ticket Authentication**:
+  For systems with local Kerberos realm integration (e.g., Cornell-managed workstations):
+  ```bash
+  kinit <username>@CLASSE.CORNELL.EDU
+  ```
+  With `~/.ssh/config` configured:
+  ```ssh-config
+  Host lnx201.classe.cornell.edu lnx201
+    HostName lnx201.classe.cornell.edu
+    User <username>
+    GSSAPIAuthentication yes
+    GSSAPIDelegateCredentials yes
+  ```
+
+---
+
 ## Cluster & Beamline Etiquette
 
 All skills in this suite strictly adhere to CLASSE compute cluster etiquette, Grid Engine allocation rules, and beamline hardware constraints.
