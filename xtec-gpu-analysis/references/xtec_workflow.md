@@ -18,18 +18,18 @@ XTEC automates the discovery of phase transitions, charge density waves (CDWs), 
   └── TempDependence.to_xtec() -> xtec_data.nxs
                  │
                  ▼
-      [Phase 1: Preprocessing (lnx4428 GPU)]
+      [Phase 1: Preprocessing (GPU via qsub -l cuda_free=1)]
       ├── Mask_Zeros (filter dead pixels)
       └── Threshold_Background (KL-divergence cutoff)
                  │
                  ▼
-      [Phase 2: Model Selection (lnx4428 GPU)]
+      [Phase 2: Model Selection (GPU via qsub -l cuda_free=1)]
       ├── BIC Sweep (k = 2 ... 14) Mode 'd' (Direct Voxel GMM)
       ├── BIC Sweep (k = 2 ... 14) Mode 's' (Peak-Averaged GMM)
       └── Knee / Minimum BIC Determination
                  │
                  ▼
-      [Phase 3: Clustering & Reordering (lnx4428 GPU)]
+      [Phase 3: Clustering & Reordering (GPU via qsub -l cuda_free=1)]
       ├── GMM Training (torchgmm, kmeans++ seed)
       └── Deterministic Reordering (descending low-T intensity)
                  │
@@ -110,9 +110,15 @@ print("Temperatures (K):", data['Te'].nxdata)
 
 ---
 
-## 3. CLI Usage (`xtec-gpu`)
+## 3. CLI Usage & Batch Job Submission (`qsub -l cuda_free=1`)
 
-Once `xtec_data.nxs` is available, execute clustering subcommands on GPU node `lnx4428`:
+Once `xtec_data.nxs` is available, submit clustering jobs to the Grid Engine GPU queue:
+
+```bash
+qsub -l cuda_free=1 xtec_job.sh
+```
+
+Inside the SGE job wrapper (`xtec_job.sh`), execute the `xtec-gpu` CLI subcommands:
 
 ```bash
 # 1. Direct voxel clustering (Mode d)

@@ -20,7 +20,7 @@ Understanding node specialization is critical to avoid degrading interactive per
 └──────────────────┬───────────────────┘
                    │
          ┌─────────┴─────────┐
-         ▼ (qrsh)            ▼ (SSH BatchMode)
+         ▼ (qrsh)            ▼ (qsub -l cuda_free=1)
 ┌─────────────────────────┐  ┌────────────────────────────────────────┐
 │ Interactive CPU Nodes   │  │ Dedicated CUDA GPU Node                │
 │ interactive.q (mem=350G)│  │ lnx4428.classe.cornell.edu             │
@@ -59,6 +59,7 @@ Understanding node specialization is critical to avoid degrading interactive per
    - Workloads: GPU Gaussian Mixture Models (`torchgmm`), Kullback-Leibler thresholding on GPU, connected-component peak identification, Bayesian Information Criterion sweeps.
    - Python interpreter: `/nfs/chess/sw/qm2_XTEC312/bin/python`.
    - Binary: `/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu`.
+   - **Execution Protocol**: Submitted via Grid Engine batch script requesting `-l cuda_free=1`.
 
 ---
 
@@ -72,22 +73,32 @@ Understanding node specialization is critical to avoid degrading interactive per
 
 ---
 
-## 3. Remote Execution Mechanics
+## 3. GPU Batch Execution Mechanics (`qsub -l cuda_free=1`)
 
-For GPU workloads on `lnx4428`, execute non-interactively via SSH:
+All CUDA GPU workloads must be submitted to the Grid Engine queue with the GPU resource request:
 
 ```bash
-# Running xtec-gpu CLI directly
-ssh -o BatchMode=yes lnx4428 "/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d /path/to/data.nxs -o /path/to/results/ --min-k 2 --max-k 14"
-
-# Running custom Python scripts
-ssh -o BatchMode=yes lnx4428 "/nfs/chess/sw/qm2_XTEC312/bin/python <script>.py"
+qsub -l cuda_free=1 xtec_job.sh
 ```
 
-### SSH Configuration Tips
-- `-o BatchMode=yes`: Prevents the command from hanging indefinitely on interactive password or passphrase prompts.
+### Standard GPU Job Script Template (`xtec_job.sh`)
 
-### Grid Engine (SGE) Quota Notice
-- CLASSE provides `qsub` for batch queues (`all.q`, `cuda.q`).
-- However, load sensors on specific nodes (including `lnx4428`) frequently report `cuda_free=0` or negative values due to sensor configuration mismatches.
-- Direct non-interactive SSH execution has been verified and approved by the user for dedicated processing on `lnx4428`.
+```bash
+#!/bin/bash
+#$ -S /bin/bash
+#$ -N xtec_gpu
+#$ -cwd
+#$ -j y
+#$ -l cuda_free=1
+#$ -o qsub_xtec.log
+
+echo "=== Running XTEC-GPU on $(hostname) ==="
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
+
+# Running xtec-gpu CLI directly
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d /path/to/data.nxs -o /path/to/results/ --min-k 2 --max-k 14
+```
+
+### Facility GPU Policy
+- Grid Engine dynamically manages allocation of the Titan RTX accelerator on `lnx4428` via the `cuda_free=1` resource directive.
+- Direct interactive GPU compute or executing outside Grid Engine without `-l cuda_free=1` is strictly forbidden.

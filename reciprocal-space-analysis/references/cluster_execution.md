@@ -27,10 +27,14 @@ Do not SSH directly into compute nodes (such as `lnx308`) for interactive analys
    /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python my_analysis_script.py
    ```
 
-### Non-Interactive Remote GPU Execution (lnx4428)
-For GPU-accelerated XTEC clustering on `lnx4428`, execute non-interactively via SSH:
+### CUDA GPU Batch Execution (Grid Engine via `qsub -l cuda_free=1`)
+For GPU-accelerated XTEC clustering, submit an SGE batch job requesting the GPU resource:
 ```bash
-ssh -o BatchMode=yes lnx4428 "/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d /path/to/data.nxs -o /path/to/results/ --min-k 2 --max-k 10"
+qsub -l cuda_free=1 xtec_job.sh
+```
+Inside the SGE script (`xtec_job.sh`):
+```bash
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d /path/to/data.nxs -o /path/to/results/ --min-k 2 --max-k 14
 ```
 
 ---
