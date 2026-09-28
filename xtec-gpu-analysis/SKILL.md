@@ -37,50 +37,47 @@ flowchart LR
 
 ## 1. Remote Cluster Node Topology & Etiquette
 
+Per [`GEMINI.md`](../GEMINI.md), all remote Python and Conda environments on CLASSE are **strictly read-only / immutable**. Never run `pip install` or modify environment configurations.
+
 Always strictly distinguish between the machine classes on CLASSE:
 
 | Node Role | Host / Queue | Purpose & Hardware | Execution Rule |
 | :--- | :--- | :--- | :--- |
 | **Login Node** | `lnx201` | Shell management, file editing, git, job dispatch. **No GPU.** | **NEVER run compute**, heavy data loading, or model training here. |
-| **Interactive CPU Node** | `interactive.q` | Downstream analysis, `nxs_analysis_tools`, 4D XTEC dataset compilation (`to_xtec`), 3D rotations, PDF compilation. | Access via `qrsh -q interactive.q -l mem_free=350G` from `lnx201`. Python: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`. |
+| **Interactive CPU Node** | `interactive.q` | Downstream analysis, `nxs_analysis_tools`, 4D XTEC dataset compilation (`to_xtec`), 3D rotations, PDF compilation. | Allocate an interactive shell session: `qrsh -q interactive.q -l mem_free=350G` from `lnx201`. Python: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`. |
+| **Batch CPU Nodes** | `all.q@lnx307*`<br>`all.q@lnx311*`<br>`all.q@lnx312*`<br>`all.q@lnx313*` | Non-interactive data preparation & reduction (200 GB RAM, AVX2 pool). | Non-interactive batch execution via `qsub` (e.g. [`example_job_scripts/xtec-prep-batch.sh`](../example_job_scripts/xtec-prep-batch.sh)). Avoids Kerberos password hangs when running unattended over SSH. |
 | **CUDA GPU Node** | `lnx4428` | Heavy ML/clustering, PyTorch, `torchgmm`, GPU preprocessing. **NVIDIA Titan RTX (24 GB VRAM).** | **Submit via Grid Engine: `qsub -l cuda_free=1 <job_script>.sh`.** Python: `/nfs/chess/sw/qm2_XTEC312/bin/python`. |
 
 *Detailed reference:* [Cluster Topology & Execution Guide](./references/cluster_topology.md)
 
 ---
 
-## 2. Python Environments & Execution Mechanics
+## 2. Python Environments, Immutability & Execution Mechanics
 
-- **Phase 0 Environment (4D Input Generation on `interactive.q`)**:
-  - Python interpreter: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`
-  - Utilizes `nxs_analysis_tools.chess.TempDependence.to_xtec()` with lazy loading.
-  - Protocol: From `lnx201`, allocate an interactive session:
-    ```bash
-    qrsh -q interactive.q -l mem_free=350G
-    /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python $HOME/.gemini/config/skills/xtec-gpu-analysis/scripts/generate_xtec_input.py --sample-dir <sample_dir> --output <sample_dir>/xtec_data.nxs
-    ```
+### 2.1 Multi-Stage Environment Segregation
+- **Phase 0 (4D Input Generation on CPU)**:
+  - Python interpreter: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python` (`NIGHTLY_PYTHON`)
+  - Uses `nxs_analysis_tools.chess.TempDependence.to_xtec()` with lazy loading.
+  - Interactive Mode: `qrsh -q interactive.q -l mem_free=350G` from `lnx201`.
+  - Non-Interactive Batch Mode: Submit `qsub example_job_scripts/xtec-prep-batch.sh`.
 
-- **Phases 1–4 Environment (GPU Clustering via `qsub -l cuda_free=1`)**:
-  - Python interpreter: `/nfs/chess/sw/qm2_XTEC312/bin/python`
-  - CLI binary: `/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu`
+- **Phases 1–4 (GPU Clustering on `lnx4428`)**:
+  - Python interpreter: `/nfs/chess/sw/qm2_XTEC312/bin/python` (`GPU_PYTHON`)
+  - CLI binary: `/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu` (`XTEC_BIN`)
   - **Do NOT use** `/nfs/chess/sw/qm2_XTEC/bin/python` (Python 3.9, which crashes on PEP 604 type unions `X | Y`).
   - Batch Submission via Grid Engine:
     ```bash
     qsub -l cuda_free=1 <job_script>.sh
     ```
-    Example job wrapper (see `example_job_scripts/xtec-gpu-clustering.sh`):
-    ```bash
-    #!/bin/bash
-    #$ -S /bin/bash
-    #$ -N xtec_gpu
-    #$ -cwd
-    #$ -j y
-    #$ -l cuda_free=1
-    #$ -o qsub_xtec.log
+    (See [`example_job_scripts/xtec-gpu-clustering.sh`](../example_job_scripts/xtec-gpu-clustering.sh)).
 
-    /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d <sample_dir>/xtec_data.nxs -o <output_dir> --min-k 2 --max-k 14
-    ```
-- **Grid Engine Policy**: All GPU jobs must request GPU resources using `-l cuda_free=1`. Do not run heavy GPU clustering interactively or over direct SSH without queue allocation.
+### 2.2 Execution Modalities: Interactive Shells vs. Non-Interactive Batch
+- **Interactive Shell Sessions**: When working in a live interactive shell, allocate an interactive compute host with `qrsh -q interactive.q -l mem_free=350G`.
+- **Non-Interactive Batch Execution**: When running unattended or programmatic commands over SSH without a connected terminal, `qrsh` halts on Kerberos PAM credential prompts (`Password for <user>@CLASSE.CORNELL.EDU:`). For unattended execution, submit an SGE batch wrapper via `qsub` (e.g. [`example_job_scripts/xtec-prep-batch.sh`](../example_job_scripts/xtec-prep-batch.sh)) and stream stdout/stderr via `tail -f <log>`.
+
+### 2.3 Mandatory "Show-Before-Submit" Verification Gate
+> [!IMPORTANT]
+> Prior to executing `qsub <job_script>.sh` for any stage (data preparation or GPU clustering), the assistant **MUST present the complete script text to the user**, highlighting queue targets, memory requests, slot allocations, environment path, and CLI invocation. The user must provide confirmation before the job is submitted.
 
 ---
 
@@ -95,9 +92,12 @@ When a user commands **"Run XTEC on {sample}"**, execute the following lifecycle
   [Phase 0: Input Verification & Generation]
   ├── 1. Check if <sample_dir>/xtec_data.nxs exists.
   │      └── Found: Proceed directly to Phase 1 (qsub -l cuda_free=1).
-  └── 2. Missing: Launch interactive session (qrsh -q interactive.q -l mem_free=350G) to generate 4D input:
-         ├── Auto-detect format: NXRefine vs Legacy CHESS
-         ├── Load datasets via TempDependence.load_datasets()
+  └── 2. Missing: Launch data preparation (Interactive: qrsh / Non-Interactive: qsub xtec-prep-batch.sh):
+         ├── Check sample leaf: nxrefine/{sample_name}/{sample_id} vs processed_old_way/...
+         ├── Pre-validate stubs: verify transform.nxs > 0 bytes (skip empty stubs)
+         ├── Extract scan exposure times: NeXus logs/T or raw SPEC #T
+         ├── Apply modal exposure filter: exclude outlier count times (e.g. parent scans)
+         ├── Print ASCII audit summary table
          └── Compile 4D volume via TempDependence.to_xtec()
                  │
                  ▼
@@ -123,31 +123,31 @@ When a user commands **"Run XTEC on {sample}"**, execute the following lifecycle
       └── Comprehensive Markdown Report (absolute image links)
 ```
 
-### Phase 0 Details: Format Support & Automated Compilation
+### Phase 0 Details: Format Support, Metadata Verification & Modal Filtering
 
-1. **NXRefine Format**:
-   - Layout: Top-level `*_<temp>.nxs` files pointing via `NXlink` to `<temp>/transform.nxs`.
-   - Generation:
-     ```python
-     from nxs_analysis_tools.chess import TempDependence
-     td = TempDependence(sample_dir)
-     td.find_temperatures()
-     td.load_datasets(use_nxlink=True, print_tree=False)
-     td.to_xtec(filepath=output_path, overwrite=False)
+1. **Pipeline Architecture Detection (Two-Level Sample Hierarchy)**:
+   - Samples are organized hierarchically: `/nfs/chess/id4baux/{cycle}/{experiment}/{reduction_pipeline}/{sample_name}/{sample_id}/`.
+   - The top-level category (`FeTe2/`) can exist under *both* pipelines simultaneously. Always inspect the specific sample leaf `{sample_name}/{sample_id}/`:
+     - **NXRefine** (`nxrefine/{sample_name}/{sample_id}/`): Wrapper files `*_<temp>.nxs` linking to `<temp>/transform.nxs`. Coordinate axes: **`['Ql', 'Qk', 'Qh']`** (Axis 0 = $L$, Axis 1 = $K$, Axis 2 = $H$).
+     - **Legacy CHESS** (`processed_old_way/{sample_name}/{sample_id}/`): Subdirectories `<temp>/` containing `*1rot_hkli.nxs`, `*3rot_hkli.nxs`. Coordinate axes: **`['H', 'K', 'L']`** (Axis 0 = $H$, Axis 1 = $K$, Axis 2 = $L$).
+
+2. **Incomplete Stub Pre-Validation**:
+   - In `nxrefine`, placeholder wrappers may exist for unreduced temperatures (e.g. 72 MB `.nxs` file), while `<temp>/transform.nxs` is missing or 0 bytes.
+   - `generate_xtec_input.py` validates `os.path.isfile(transform_path) and os.path.getsize(transform_path) > 0`, marking empty stubs as `[SKIPPED]` to eliminate broken `NXlink` reads.
+
+3. **Metadata Verification & Modal Exposure Filtering**:
+   - Disparate count times (e.g. 15 K parent orientation scan = 365.0 s vs. standard 182.5 s) distort clustering statistics, Poisson noise floors, and cluster boundaries.
+   - `generate_xtec_input.py` extracts count times from NeXus (`logs/T`) or raw SPEC data files (`#T`), calculates the modal exposure time, and automatically excludes outlier temperatures (`[EXCLUDED - Exposure Mismatch]`).
+   - Displays a structured ASCII audit table detailing candidate status prior to compilation.
+
+4. **Execution Protocol**:
+   - **Interactive Shell Sessions**:
+     ```bash
+     qrsh -q interactive.q -l mem_free=350G
+     /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python $HOME/.gemini/config/skills/xtec-gpu-analysis/scripts/generate_xtec_input.py --sample-dir <sample_dir> --output <sample_dir>/xtec_data.nxs
      ```
-2. **Legacy CHESS Format**:
-   - Layout: Subdirectories named `<temp>/` containing `*1rot_hkli.nxs`, `*3rot_hkli.nxs`, or `*hkli.nxs`.
-   - Generation:
-     ```python
-     from nxs_analysis_tools.chess import TempDependence
-     td = TempDependence(sample_dir)
-     td.find_temperatures()
-     # Auto-detect file ending pattern (prefers 3rot_hkli.nxs > 1rot_hkli.nxs > hkli.nxs)
-     td.load_datasets(file_ending="1rot_hkli.nxs", print_tree=False)
-     td.to_xtec(filepath=output_path, overwrite=False)
-     ```
-3. **Execution Script**:
-   - Use the bundled utility: `scripts/generate_xtec_input.py` in an interactive session (`qrsh -q interactive.q -l mem_free=350G`).
+   - **Non-Interactive Batch Sessions**:
+     Submit [`example_job_scripts/xtec-prep-batch.sh`](../example_job_scripts/xtec-prep-batch.sh) via `qsub` after presenting the script text to the user for confirmation.
 
 *Detailed reference:* [XTEC Workflow Guide](./references/xtec_workflow.md)
 

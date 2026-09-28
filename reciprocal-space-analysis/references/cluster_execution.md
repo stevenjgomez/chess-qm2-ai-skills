@@ -2,9 +2,11 @@
 
 Synchrotron reciprocal space datasets (especially 3D volumes) routinely reach gigabytes in memory. Processing these files requires adherence to cluster etiquette and headless execution patterns.
 
+Per [`GEMINI.md`](../../GEMINI.md), all remote Python and Conda environments on CLASSE are **strictly read-only / immutable**. Never run `pip install` or modify environment configurations.
+
 ---
 
-## 1. Login Node vs. Compute Node Separation & Interactive Sessions
+## 1. Login Node vs. Compute Node Separation & Execution Protocols
 
 In the CLASSE cluster environment, strictly differentiate between node classes:
 - **`lnx201`** is a **login node** intended exclusively for editing files, monitoring jobs, git operations, and light shell tasks. **Never run compute here.**
@@ -12,20 +14,29 @@ In the CLASSE cluster environment, strictly differentiate between node classes:
 - **Interactive Compute Nodes (`interactive.q`)**: For downstream analysis (`nxs_analysis_tools`, diagnostic reciprocal space slicing, linecuts, LaTeX PDF compilation).
 - **`lnx4428`** is a **dedicated CUDA GPU compute node** (NVIDIA Titan RTX, 24 GB VRAM) for machine learning, clustering (`XTEC-GPU`), and PyTorch workloads. Python: `/nfs/chess/sw/qm2_XTEC312/bin/python`. (See `xtec-gpu-analysis` skill).
 
-### Mandatory Interactive Session Protocol
-Do not SSH directly into compute nodes (such as `lnx308`) for interactive analysis. Follow this 3-step protocol:
-1. **Login to gateway**:
-   ```bash
-   ssh <username>@lnx201.classe.cornell.edu
-   ```
-2. **Request an interactive compute session with Grid Engine**:
-   ```bash
-   qrsh -q interactive.q -l mem_free=350G
-   ```
-3. **Execute analysis or activate environment**:
-   ```bash
-   /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python my_analysis_script.py
-   ```
+### Dual Execution Pattern: `qrsh` vs. `qsub`
+
+1. **Interactive Human Sessions (Mandatory `qrsh`)**:
+   Do not SSH directly into compute nodes (such as `lnx308`). Follow this 3-step protocol:
+   1. **Login to gateway**:
+      ```bash
+      ssh <username>@lnx201.classe.cornell.edu
+      ```
+   2. **Request an interactive compute session with Grid Engine**:
+      ```bash
+      qrsh -q interactive.q -l mem_free=350G
+      ```
+   3. **Execute analysis using designated environment**:
+      ```bash
+      /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python my_analysis_script.py
+      ```
+
+2. **Automated / Agentic Sessions (Mandatory `qsub` Batch Submission)**:
+   In automated SSH sessions from local tools, `qrsh` spawns an SSH/rsh connection to worker nodes that prompts for Kerberos passwords (`Password for <user>@CLASSE.CORNELL.EDU:`), causing unattended commands to hang. Automated agents must submit short-lived SGE batch wrappers via `qsub` (200 GB RAM, AVX2 pool) and stream stdout/stderr via `tail -f <log>`.
+
+3. **Mandatory "Show-Before-Submit" Verification Gate**:
+   > [!IMPORTANT]
+   > Prior to executing `qsub <job_script>.sh` for any task, the assistant MUST present the complete script text to the user, highlighting queue targets, memory requests, slot allocations, environment path, and CLI invocation. The user must provide confirmation before the job is submitted.
 
 ### CUDA GPU Batch Execution (Grid Engine via `qsub -l cuda_free=1`)
 For GPU-accelerated XTEC clustering, submit an SGE batch job requesting the GPU resource:

@@ -27,7 +27,7 @@ NIGHTLY_PYTHON = "/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python"
 VIS_PYTHON = NIGHTLY_PYTHON if os.path.exists(NIGHTLY_PYTHON) else PYTHON_EXEC
 DEFAULT_CODEBASE = os.environ.get(
     "CHESS_LEGACY_CODEBASE",
-    os.path.expanduser("~/Documents/automate_legacy_workflow/StevenGomezAlvarado_Codebase")
+    os.path.expanduser("~/chess_legacy_codebase")
 )
 
 

@@ -12,6 +12,7 @@ All scripts execute unbuffered Python (`python -u`) so job execution logs can be
 | :--- | :--- | :--- |
 | [`legacy-reduction-FeTe2-5A-281-fastpath.sh`](./legacy-reduction-FeTe2-5A-281-fastpath.sh) | `all.q@lnx307*,lnx311*,lnx312*,lnx313*`<br>(AVX2 CPU, 32 cores, 200 GB RAM) | **Phase 1: Warm Reference Fast-Path Reduction**: Stacks raw Pilatus CBF frames into `stack1.nxs`, runs headless orientation matrix (ORM) basinhopping, converts 1-rotation reciprocal volume (`1rot_hkli.nxs`), and renders diagnostic cross-sectional slices (`HK0`, `H0L`, `0KL`). |
 | [`legacy-reduction-FeTe2-5A-batch.sh`](./legacy-reduction-FeTe2-5A-batch.sh) | `all.q@lnx307*,lnx311*,lnx312*,lnx313*`<br>(AVX2 CPU, 32 cores, 200 GB RAM) | **Phase 2: Temperature-Series Batch Reduction**: Iterates over all remaining temperature points for the sample, reusing the verified orientation matrix from `--ref-temp` without re-solving. |
+| [`xtec-prep-batch.sh`](./xtec-prep-batch.sh) | `all.q@lnx307*,lnx311*,lnx312*,lnx313*`<br>(AVX2 CPU, 16 cores, 200 GB RAM) | **Stage 0: 4D XTEC Dataset Compilation**: Non-interactive batch wrapper for compiling 3D reciprocal volumes into 4D `xtec_data.nxs` with stub pre-validation and modal exposure filtering. Reserved for automated/agentic runs where `qrsh` hangs on Kerberos prompts. |
 | [`xtec-gpu-clustering.sh`](./xtec-gpu-clustering.sh) | `lnx4428` via `#$ -l cuda_free=1`<br>(NVIDIA Titan RTX, 24 GB VRAM) | **Phase 4: XTEC-GPU Clustering**: Executes high-throughput GMM clustering (`xtec-d`, `xtec-s`, `bic-d`, `bic-s`) on compiled 4D NeXus files using PyTorch and `torchgmm`. |
 
 ---
@@ -49,7 +50,19 @@ qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
 
 ---
 
-## 2. CUDA GPU Clustering Job Submission
+## 2. Non-Interactive 4D XTEC Dataset Preparation (`xtec-prep-batch.sh`)
+
+When preparing 4D datasets from automated or agentic sessions (where interactive `qrsh` hangs due to Kerberos password prompts), submit the pre-validation and compilation job via `qsub`:
+
+```bash
+qsub xtec-prep-batch.sh
+```
+
+Monitors stub validity (`transform.nxs > 0 bytes`), extracts scan count times, automatically filters out exposure outliers, and outputs `xtec_data.nxs`.
+
+---
+
+## 3. CUDA GPU Clustering Job Submission
 
 For temperature-series scattering datasets compiled into `xtec_data.nxs` (via `generate_xtec_input.py`), submit clustering jobs to the dedicated GPU node (`lnx4428`):
 
@@ -65,7 +78,7 @@ Edit `xtec-gpu-clustering.sh` to adjust:
 
 ---
 
-## 3. Monitoring Running Jobs
+## 4. Monitoring Running Jobs
 
 Check queue and slot status:
 ```bash
@@ -76,3 +89,19 @@ Monitor live stdout/stderr execution log:
 ```bash
 tail -f /path/to/log/qsub_batch.log
 ```
+
+---
+
+## 5. Mandatory "Show-Before-Submit" Verification Gate
+
+> [!IMPORTANT]
+> **Assistant Submission Rule**: AI agents and automated scripts must **never** execute `qsub <job_script>.sh` silently.
+> Prior to submission, the assistant MUST display the complete script content to the user, highlighting:
+> 1. Target queue and hosts (`-q`)
+> 2. Memory limits (`-l mem_free`)
+> 3. Core allocation (`-pe sge_pe`) or GPU flag (`-l cuda_free=1`)
+> 4. Python binary path (`PYTHON_EXEC`, `NIGHTLY_PYTHON`, `GPU_PYTHON`)
+> 5. Output log path (`#$ -o`)
+> 6. Exact command-line parameters
+> The user must confirm the configuration before the submission command is issued.
+

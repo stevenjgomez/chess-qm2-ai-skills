@@ -2,9 +2,11 @@
 
 This document details the node architecture, access conventions, and environment management when operating on the CLASSE computing infrastructure for synchrotron data analysis.
 
+Per [`GEMINI.md`](../../GEMINI.md), all remote Python and Conda environments on CLASSE are **strictly read-only / immutable**. Never run `pip install` or modify environment configurations.
+
 ---
 
-## 1. Node Roles & Specialization
+## 1. Node Roles, Specialization & Execution Modes
 
 Understanding node specialization is critical to avoid degrading interactive performance for other beamline users and to ensure workloads have access to necessary compute accelerators.
 
@@ -20,37 +22,35 @@ Understanding node specialization is critical to avoid degrading interactive per
 └──────────────────┬───────────────────┘
                    │
          ┌─────────┴─────────┐
-         ▼ (qrsh)            ▼ (qsub -l cuda_free=1)
+         ▼ (qrsh / qsub)     ▼ (qsub -l cuda_free=1)
 ┌─────────────────────────┐  ┌────────────────────────────────────────┐
-│ Interactive CPU Nodes   │  │ Dedicated CUDA GPU Node                │
-│ interactive.q (mem=350G)│  │ lnx4428.classe.cornell.edu             │
-│ - 3-step qrsh workflow  │  │ - Hardware: NVIDIA Titan RTX (24GB)    │
-│ - nxs_analysis_tools    │  │ - Tasks: XTEC-GPU, torchgmm, PyTorch   │
+│ CPU Compute Nodes       │  │ Dedicated CUDA GPU Node                │
+│ interactive.q / all.q   │  │ lnx4428.classe.cornell.edu             │
+│ - Human: qrsh (mem=350G)│  │ - Hardware: NVIDIA Titan RTX (24GB)    │
+│ - Agent: qsub batch     │  │ - Tasks: XTEC-GPU, torchgmm, PyTorch   │
 │ - to_xtec 4D compilation│  │ - Preprocessing & GMM clustering       │
 │ - 3D Reciprocal Slicing │  │ - Discrete Q-Map rendering             │
 └─────────────────────────┘  └────────────────────────────────────────┘
 ```
 
-### Node Profiles
+### Node Profiles & Execution Protocols
 
 1. **Login Node: `lnx201`**:
    - Shared entry point for all CLASSE/CHESS users.
    - Resource quotas are tightly policed.
    - Running compute tasks (such as PyTorch models, NeXus preprocessing, or heavy array math) on `lnx201` is strictly forbidden by facility policy.
 
-2. **Interactive CPU Compute Nodes (`interactive.q`)**:
+2. **CPU Compute Nodes (`interactive.q` & `all.q`)**:
    - High-memory compute instances allocated dynamically via Grid Engine.
    - Workloads: NeXus dataset loading, 4D XTEC input generation via `to_xtec()`, 3D lattice coordinate transformations, hexagonal skew projections, 1D/2D linecut generation, and LaTeX PDF compilation.
-   - **Mandatory Workflow**:
-     ```bash
-     # 1. Connect to gateway
-     ssh <user>@lnx201.classe.cornell.edu
-     # 2. Allocate interactive session
-     qrsh -q interactive.q -l mem_free=350G
-     # 3. Run analysis
-     /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python my_script.py
-     ```
+   - **Dual Execution Pattern**:
+     - **Interactive Human Sessions**: Use `qrsh -q interactive.q -l mem_free=350G` from `lnx201`.
+     - **Automated / Agentic Sessions**: In unattended automated sessions over SSH, `qrsh` prompts for Kerberos passwords (`Password for <user>@CLASSE.CORNELL.EDU:`), causing unattended scripts to hang. Automated agents must submit short-lived SGE batch wrappers via `qsub` (e.g. [`example_job_scripts/xtec-prep-batch.sh`](../../example_job_scripts/xtec-prep-batch.sh)) and stream stdout/stderr via `tail -f <log>`.
    - Direct SSH into compute nodes like `lnx308` is prohibited.
+
+3. **Mandatory "Show-Before-Submit" Verification Gate**:
+   > [!IMPORTANT]
+   > Prior to executing `qsub <job_script>.sh` for any stage (data preparation or GPU clustering), the assistant MUST present the complete script text to the user, highlighting queue targets, memory requests, slot allocations, environment path, and CLI invocation. The user must provide confirmation before the job is submitted.
 
 3. **CUDA GPU Compute Node: `lnx4428`** (The "XTEC Scripts"):
    - Hostname: `lnx4428.classe.cornell.edu`.

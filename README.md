@@ -148,23 +148,43 @@ All skills in this suite strictly adhere to CLASSE compute cluster etiquette, Gr
 
 ### Operational Guidelines
 
-1. **Batch Reduction Pipeline (`qsub`)**:
-   - Heavy data processing (raw Pilatus CBF frame stacking, headless ORM basinhopping, and 3D reciprocal conversions) consumes massive memory bandwidth and RAM. They **must** be submitted via `qsub` targeting the AVX2 pool:
-     ```bash
-     qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 <job_script>.sh
-     ```
-2. **Two-Stage Routing for XTEC-GPU Workflows**:
-   - **Stage 0 (Input Compilation)**: Executed in an interactive CPU session (`qrsh -q interactive.q -l mem_free=350G`) using `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python` to compile 3D datasets into a 4D `NXdata` volume via `generate_xtec_input.py` / `TempDependence.to_xtec()`.
-   - **Stages 1–4 (ML Preprocessing & Clustering)**: Submitted to the Grid Engine GPU queue targeting the Titan RTX accelerator via `qsub -l cuda_free=1 <job_script>.sh` using `/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu` (see [`example_job_scripts/xtec-gpu-clustering.sh`](./example_job_scripts/xtec-gpu-clustering.sh)).
-3. **AVX2 Vector Instruction Enforcing**:
+1. **Pipeline Architecture Detection & Two-Level Sample Hierarchy**:
+   - In `/nfs/chess/id4baux/{cycle}/{experiment}/`, samples are structured hierarchically: `{sample_name}/{sample_id}/` (e.g. `FeTe2/FeTe2-5A` vs. `FeTe2/FeTe2-8A`, or `KV2Se2O/KVSO-1C`).
+   - The top-level category (`FeTe2/`) can exist under *both* `nxrefine/` and `processed_old_way/` simultaneously if different sample mounts were reduced with different pipelines.
+   - **Architecture Detection Rule**: Always evaluate the specific sample leaf `{sample_name}/{sample_id}/`:
+     - **NXRefine Architecture** (`nxrefine/{sample_name}/{sample_id}/`): Top-level `*_<temp>.nxs` wrappers linking to `<temp>/transform.nxs`. Coordinate axes: **`['Ql', 'Qk', 'Qh']`** (Axis 0 = $L$, Axis 1 = $K$, Axis 2 = $H$). `Scissors` cuts follow $(L, K, H)$ order.
+     - **Legacy CHESS Architecture** (`processed_old_way/{sample_name}/{sample_id}/`): Subdirectories `<temp>/` containing `stack*.nxs`, `1rot_hkli.nxs`, `3rot_hkli.nxs`. Coordinate axes: **`['H', 'K', 'L']`** (Axis 0 = $H$, Axis 1 = $K$, Axis 2 = $L$). `Scissors` cuts follow $(H, K, L)$ order.
+
+2. **Strict Remote Environment Immutability**:
+   - > [!CAUTION]
+   - > **Mandatory Read-Only Policy**: All remote Python/Conda environments on CLASSE (`anaconda3_jpcr`, `anaconda3_sgomezalvarado`, `anaconda3_sgomezalvarado_nightly`, `qm2_XTEC312`) are **strictly read-only / immutable**.
+   - > Never execute `pip install`, `conda install`, or alter environment configuration files or shebangs.
+   - > If an environment lacks a required package or fails an import, the assistant must **halt and report the discrepancy to the user** immediately rather than attempting installation or modifying system paths.
+
+3. **Stage-Specific Architectural Interpreter Constants**:
+   - Beamline automation explicitly segregates pipeline stages across designated environments using architectural constants:
+     - **`PYTHON_EXEC`** (`/nfs/chess/sw/anaconda3_jpcr/bin/python`): Dedicated to raw frame stacking, ORM basinhopping, and 1rot/3rot reciprocal conversions (strictly frozen; required for `libhkl.so`).
+     - **`NIGHTLY_PYTHON` / `VIS_PYTHON`** (`/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`): Dedicated to downstream reciprocal slicing (`slice_visualizer.py`), `nxs_analysis_tools.plot_slice()`, and 4D dataset compilation (`generate_xtec_input.py`).
+     - **`GPU_PYTHON` / `XTEC_BIN`** (`/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu`): Dedicated to GPU-accelerated GMM clustering on `lnx4428`.
+   - *Defining "Unauthorized Redirection"*: Substituting an unapproved third environment (such as arbitrarily replacing `anaconda3_sgomezalvarado_nightly` with `anaconda3_sgomezalvarado` to bypass an installation error) is prohibited. Orchestrators using stage-appropriate designated constants for each specific step is standard architecture.
+
+4. **Dual Execution Pattern: Interactive Sessions (`qrsh`) vs. Batch (`qsub`)**:
+   - **Interactive Human Sessions**: Use `qrsh -q interactive.q -l mem_free=350G` from `lnx201`.
+   - **Automated / Agentic Sessions**: In unattended automated sessions, `qrsh` spawns an SSH/rsh connection that prompts interactively for Kerberos passwords (`Password for <user>@CLASSE.CORNELL.EDU:`), causing headless scripts to hang. Automated workflows must submit short-lived SGE batch wrappers via `qsub` (e.g. [`example_job_scripts/xtec-prep-batch.sh`](./example_job_scripts/xtec-prep-batch.sh)), streaming stdout/stderr via `tail -f <log>`.
+
+5. **Mandatory "Show-Before-Submit" Verification Gate**:
+   - Prior to executing `qsub <job_script>.sh` for any stage (data reduction, 4D preparation, or GPU clustering), the assistant MUST display the full script content to the user, highlighting queue targets, memory requests, core allocations, environment path, and command arguments. The user must provide confirmation before the job is submitted.
+
+6. **Metadata Verification & Modal Exposure Filtering**:
+   - In 4D XTEC input preparation (`generate_xtec_input.py`), the assistant extracts scan count times via NeXus (`logs/T`) or raw SPEC files (`#T`), verifies that `transform.nxs` exists and has non-zero size (>0 bytes), and automatically excludes outlier exposure scans (such as parent orientation runs) via modal exposure filtering to preserve Poisson statistics and prevent false clustering boundaries.
+
+7. **AVX2 Vector Instruction Enforcing**:
    - The beamline's compiled C library (`libhkl.so`) requires AVX2 vector instructions. Jobs dispatched to older nodes (e.g. `lnx327`) crash with `SIGILL` (Exit Code `-4`). Queue targets are strictly restricted to verified AVX2 hosts (`lnx307`, `lnx311`, `lnx312`, `lnx313`).
-4. **Designated Python Environments**:
-   - **Legacy Reduction Pipeline**: `/nfs/chess/sw/anaconda3_jpcr/bin/python` (shared beamline environment, frozen/never modified).
-   - **Modern Analysis & Visualization**: `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python` (hosts `nxs_analysis_tools`, PyTorch, and `plot_slice()`).
-   - **CUDA ML / Clustering**: `/nfs/chess/sw/qm2_XTEC312/bin/python` (hosts `torchgmm`, PyTorch CUDA 12.2 on `lnx4428`).
-5. **Strict Data Safety Policy**:
+
+8. **Strict Data Safety Policy**:
    - **NEVER delete or remove any `.nxs` files**. All reduction and transformation workflows generate non-destructively suffixed files (`1rot_hkli_1.nxs`, `xtec_data_1.nxs`, etc.) rather than overwriting or deleting prior datasets.
-6. **Energy & Lattice Parameter Scaling**:
+
+9. **Energy & Lattice Parameter Scaling**:
    - Miller index bounds $(H, K, L)$ scale with incident beam energy ($E$) and real-space lattice parameters ($a, b, c$). Customized bounds (e.g. $H, K: \pm 3.0, L: \pm 3.5$ at $15\text{ keV}$) prevent generating oversized, zero-padded reciprocal volumes.
 
 ---
@@ -179,6 +199,7 @@ chess-qm2-ai-skills/
 ├── example_job_scripts/
 │   ├── legacy-reduction-FeTe2-5A-281-fastpath.sh
 │   ├── legacy-reduction-FeTe2-5A-batch.sh
+│   ├── xtec-prep-batch.sh
 │   └── xtec-gpu-clustering.sh
 ├── chess-legacy-reduction/
 │   ├── SKILL.md

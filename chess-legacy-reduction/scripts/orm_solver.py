@@ -373,8 +373,8 @@ def main():
     parser.add_argument("--projectdir", required=True, help="Processed temperature directory (where stack1.nxs is located)")
     parser.add_argument("--unitcell", required=True, help="Unit cell CSV file or 'a,b,c,alpha,beta,gamma'")
     parser.add_argument("--codebase",
-                        default=os.environ.get("CHESS_LEGACY_CODEBASE", os.path.expanduser("~/Documents/automate_legacy_workflow/StevenGomezAlvarado_Codebase")),
-                        help="Path to legacy codebase containing hkl.py and libhkl.so (default: $CHESS_LEGACY_CODEBASE or ~/Documents/automate_legacy_workflow/StevenGomezAlvarado_Codebase)")
+                        default=os.environ.get("CHESS_LEGACY_CODEBASE", os.path.expanduser("~/chess_legacy_codebase")),
+                        help="Path to legacy codebase containing hkl.py and libhkl.so (default: $CHESS_LEGACY_CODEBASE or ~/chess_legacy_codebase)")
     parser.add_argument("--valmin", type=float, default=0.9, help="Initial minimum intensity fraction")
     parser.add_argument("--valmax", type=float, default=1.0, help="Maximum intensity fraction")
     parser.add_argument("--lower-bound", type=int, default=50, help="Minimum acceptable number of peaks")

@@ -35,9 +35,11 @@ The canonical, authoritative reference skills for `nxs_analysis_tools` and gener
 
 ## 2. Remote Cluster Etiquette & Execution Modes
 
+Per [`GEMINI.md`](../GEMINI.md), all remote Python and Conda environments on CLASSE are **strictly read-only / immutable**. Never run `pip install` or modify environment configurations.
+
 1. **Compute Nodes vs. Login Node**:
    - **Login node (`lnx201`)**: Text editing, job submission, git operations, and lightweight monitoring only. Computing, array manipulation, or figure rendering on `lnx201` is strictly forbidden.
-   - **Interactive Analysis Sessions (Mandatory `qrsh`)**:
+   - **Interactive Analysis Sessions (Mandatory `qrsh` for Humans)**:
      Downstream reciprocal space data analysis using `nxs_analysis_tools` (generating 2D slices with `plot_slice()`, 1D linecuts with `Scissors`, order parameter calculations, skew transformations, and LaTeX summary report compilation) must follow the cluster interactive protocol:
      1. Login to `lnx201.classe.cornell.edu`
      2. Request an interactive shell allocation:
@@ -45,17 +47,21 @@ The canonical, authoritative reference skills for `nxs_analysis_tools` and gener
         qrsh -q interactive.q -l mem_free=350G
         ```
      3. Execute analysis using `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`. Do not SSH directly into nodes like `lnx308`.
+   - **Automated / Agentic Sessions (Mandatory `qsub` Batch Submission)**:
+     In unattended automated sessions over SSH, `qrsh` prompts for Kerberos passwords (`Password for <user>@CLASSE.CORNELL.EDU:`), causing unattended scripts to hang. Automated agents must submit short-lived SGE batch wrappers via `qsub` (200 GB RAM, AVX2 pool) and stream stdout/stderr via `tail -f <log>`.
 2. **Data Reduction vs. Data Analysis Execution Policy**:
    - **Raw Data Reduction Pipeline** (stacking raw CBF frames, ORM basinhopping solving, 3D reciprocal conversion): Heavy, long-running ($>30$ minutes), memory-intensive ($>100\text{ GB}$). Must be submitted via Grid Engine:
      ```bash
      qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 <job>.sh
      ```
-   - **Downstream Data Analysis** (`nxs_analysis_tools`): Fast, operates on already-converted volumes with lazy loading ($O(1)$ RAM). Executed inside interactive `qrsh` sessions.
-3. **Headless Execution**:
+   - **Downstream Data Analysis** (`nxs_analysis_tools`): Fast, operates on already-converted volumes with lazy loading ($O(1)$ RAM). Executed inside interactive `qrsh` sessions or short batch jobs.
+3. **Mandatory "Show-Before-Submit" Verification Gate**:
+   - Prior to executing `qsub <job_script>.sh` for any task, the assistant MUST present the complete script text to the user, highlighting queue targets, memory requests, slot allocations, environment path, and CLI invocation. The user must provide confirmation before the job is submitted.
+4. **Headless Execution**:
    - Always invoke `matplotlib.use("Agg")` before importing `matplotlib.pyplot`.
-4. **Automated LaTeX Summaries**:
+5. **Automated LaTeX Summaries**:
    - Automatically compile generated figures into PDF reports using `/usr/bin/pdflatex -interaction=nonstopmode <file>.tex`.
-5. **Strict Data Safety: NEVER Delete Any `.nxs` Files**:
+6. **Strict Data Safety: NEVER Delete Any `.nxs` Files**:
    - > [!CAUTION]
    - > **Mandatory Data Protection Policy**: Under no circumstances should the agent or user delete, remove (`os.remove`, `rm`), or overwrite any `.nxs` files (`transform.nxs`, `*hkli*.nxs`, `stack*.nxs`, etc.). Re-runs and transformations must always generate newly suffixed files (`_1.nxs`, `_2.nxs`) rather than removing prior datasets.
 
@@ -90,6 +96,8 @@ Because NXRefine and Legacy CHESS data structures use different axis ordering co
 
 > [!WARNING]
 > In NXRefine, fixing Axis 2 ($Q_h = 0.0$) eliminates $H$ and yields the **$KL$ plane**, NOT the $HK$ plane! Conversely, in Legacy CHESS, fixing Axis 0 ($H = 0.0$) eliminates $H$ and yields the **$KL$ plane**. Always check `data.nxaxes` before slicing!
+>
+> **Pipeline Architecture Detection**: Samples are structured as `{sample_name}/{sample_id}/`. Always inspect the specific sample leaf `/nfs/chess/id4baux/{cycle}/{experiment}/{pipeline}/{sample_name}/{sample_id}/`. A material (e.g. `FeTe2/`) can exist under *both* `nxrefine/` and `processed_old_way/` if different sample mounts were reduced with different workflows.
 
 ### 3.3 Float vs. Integer Indexing
 `nexusformat.nexus.NXdata` strictly distinguishes between integer and float indices:

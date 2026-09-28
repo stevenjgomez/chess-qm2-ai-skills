@@ -44,25 +44,31 @@ This skill defines the operational standards, path conventions, cluster etiquett
        3. Activate the appropriate Python environment (`/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python`) on the allocated host. Never run compute directly on `lnx201` and do not SSH directly into compute nodes like `lnx308`.
    - > [!WARNING]
    - > **AVX2 Vector Instruction Requirement & Node Compatibility (Exit Code -4 / SIGILL)**:
-   - > The shared C library `libhkl.so` in `StevenGomezAlvarado_Codebase/` was compiled with **AVX2 vector instructions**.
+   - > The shared C library `libhkl.so` in `chess_legacy_codebase/` was compiled with **AVX2 vector instructions**.
    - > If a job is dispatched to older compute nodes in `all.q` that lack AVX2 (e.g. `lnx327` with Ivy Bridge Xeon E5-2660 v2), the CPU raises an invalid opcode trap (`traps: python invalid opcode in libhkl.so`), instantly killing the process with **exit code `-4` (`SIGILL`)**.
    - > Always restrict `all.q` to verified AVX2-capable nodes using host wildcards:
    - > `-q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*'`
    - > Known verified AVX2 hosts: `lnx307` (Broadwell), `lnx311`, `lnx312`, `lnx313` (Skylake Gold 6130).
-2. **Login Node Etiquette**:
+
+2. **Mandatory "Show-Before-Submit" Verification Gate**:
+   - > [!IMPORTANT]
+   - > Prior to executing `qsub <job_script>.sh` for either fast-path reference solving or full batch reduction, the assistant **MUST present the complete script text to the user** in the chat, highlighting the queue targets, memory requests, slot allocations, environment path, and CLI invocation. The assistant must obtain explicit user confirmation before issuing the `qsub` command.
+
+3. **Login Node Etiquette**:
    - **`lnx201`** is a **login node** only. Never execute data reduction jobs or heavy analysis directly here.
    - Text editing, git operations, checking logs, `tail -f`, and monitoring `qstat` are the only activities permitted on `lnx201`.
-3. **Designated Python Environments**:
-   - **Legacy Reduction Pipeline**: All raw beamline stacking, ORM solving, and C-extension conversions (`libhkl.so`) strictly execute with:
+
+4. **Designated Python Environments & Absolute Immutability**:
+   - Per [`GEMINI.md`](../GEMINI.md), all cluster environments under `/nfs/chess/sw/` are strictly **read-only / immutable**. Never run `pip install` or modify environment files. If an import fails, halt and report to the user immediately.
+   - **Legacy Reduction Pipeline (`PYTHON_EXEC`)**: All raw beamline stacking, ORM solving, and C-extension conversions (`libhkl.so`) strictly execute with:
      ```bash
      /nfs/chess/sw/anaconda3_jpcr/bin/python
      ```
-     > [!CAUTION]
-     > The `/nfs/chess/sw/anaconda3_jpcr` environment is a shared beamline resource and **must never be modified** (no `pip install`, no `conda install`).
-   - **Modern Analysis & Visualization (`nxs_analysis_tools`)**: All post-conversion slicing, reciprocal volume visualization, and `plot_slice()` rendering strictly execute with:
+   - **Modern Analysis & Visualization (`NIGHTLY_PYTHON` / `VIS_PYTHON`)**: All post-conversion slicing, reciprocal volume visualization, and `plot_slice()` rendering strictly execute with:
      ```bash
      /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python
      ```
+     The diagnostic visualizer (`slice_visualizer.py`) automatically re-executes itself inside this environment to leverage `nxs_analysis_tools.plot_slice()` with dynamic crystallographic skew angles (e.g. `skew_angle=60°` for hexagonal $HK$).
      The diagnostic visualizer (`slice_visualizer.py`) automatically re-executes itself inside this environment to leverage `nxs_analysis_tools.plot_slice()` with dynamic crystallographic skew angles (e.g. `skew_angle=60°` for hexagonal $HK$).
 4. **Headless Execution**:
    - Always set `matplotlib.use("Agg")` prior to importing `pyplot` to prevent display connection errors during remote runs.
@@ -89,19 +95,20 @@ This skill defines the operational standards, path conventions, cluster etiquett
 Standard path patterns at CHESS ID4B:
 
 - **Raw CBF Frames**:
-  `/nfs/chess/id4b/{cycle}/{experiment-name}/raw6M/{sample}/{sample_id}/{temp}/{scan_folder}/`
+  `/nfs/chess/id4b/{cycle}/{experiment-name}/raw6M/{sample_name}/{sample_id}/{temp}/{scan_folder}/`
   *Frames:* e.g. `FeTe2_PIL10_046_00000.cbf`, ...
 - **Processed Data Output**:
-  `/nfs/chess/id4baux/{cycle}/{experiment-name}/processed_old_way/{sample}/{sample_id}/{temp}/`
+  `/nfs/chess/id4baux/{cycle}/{experiment-name}/processed_old_way/{sample_name}/{sample_id}/{temp}/`
   *Outputs:* `stack1.nxs`, `unitcell.txt`, `ormatrix_auto.nxs`, `1rot_hkli.nxs`, `3rot_hkli.nxs`.
+  *Note on Pipeline Hierarchy:* Always evaluate the two-level sample leaf `{sample_name}/{sample_id}/` (e.g. `FeTe2/FeTe2-5A`). A material category (`FeTe2/`) may simultaneously exist under `nxrefine/` and `processed_old_way/` for different sample mounts.
 - **SPEC Data File**:
-  `/nfs/chess/id4b/{cycle}/{experiment-name}/{sample}` (e.g. `/nfs/chess/id4b/2026-2/gomez-al-4850-a/FeTe2`)
+  `/nfs/chess/id4b/{cycle}/{experiment-name}/{sample_name}` (e.g. `/nfs/chess/id4b/2026-2/gomez-al-4850-a/FeTe2`)
 - **Calibration Geometry & Masks**:
   `/nfs/chess/id4baux/{cycle}/{experiment-name}/calibrations/` (`.poni` and `.edf` masks)
 - **Cluster Submission Scripts**:
   `/nfs/chess/id4baux/{cycle}/{experiment-name}/scripts/{sample_id}/` (see [`example_job_scripts/`](../example_job_scripts/) for templates)
 - **Legacy Script Codebase**:
-  `$HOME/Documents/automate_legacy_workflow/StevenGomezAlvarado_Codebase/` (override with `$CHESS_LEGACY_CODEBASE` or `--codebase`). *Note: Run-cycle paths like `/2026-2/...` are archived periodically and must not be used as permanent codebase locations.*
+  `$HOME/chess_legacy_codebase/` (override with `$CHESS_LEGACY_CODEBASE` or `--codebase`). Contains `stack_em_all.py`, `Pil6M_HKLConv_3D_2022_1rot.py`, `3rot.py`, and compiled `libhkl.so`.
 
 ---
 
