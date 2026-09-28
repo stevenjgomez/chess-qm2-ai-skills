@@ -110,26 +110,59 @@ print("Temperatures (K):", data['Te'].nxdata)
 
 ---
 
-## 3. CLI Usage & Batch Job Submission (`qsub -l cuda_free=1`)
+## 3. Autonomous GPU Batch Execution (`qsub -l cuda_free=1`)
 
-Once `xtec_data.nxs` is available, submit clustering jobs to the Grid Engine GPU queue:
+Once `xtec_data.nxs` is available, submit the autonomous clustering job to the Grid Engine GPU queue on `lnx4428`:
 
 ```bash
-qsub -l cuda_free=1 xtec_job.sh
+qsub -l cuda_free=1 example_job_scripts/xtec-gpu-clustering.sh
 ```
 
-Inside the SGE job wrapper (`xtec_job.sh`), execute the `xtec-gpu` CLI subcommands:
+### 3.1 Autonomous Pipeline Inside the SGE Job
+To avoid holding and releasing GPU allocations or requiring manual human intervention between model selection and clustering, the job script executes an integrated sequence:
 
 ```bash
-# 1. Direct voxel clustering (Mode d)
-/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d data.nxs -o results/ -n 13 --rescale mean
+# 1. BIC model selection sweep with streamed preprocessing
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-d data.nxs \
+  -o results/bic_d/ \
+  --streamed-preprocess \
+  --min-nc 2 \
+  --max-nc 14
 
-# 2. Peak-averaged clustering (Mode s)
-/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-s data.nxs -o results/ -n 13
+# 2. Autonomous k* determination (locating global minimum of the BIC curve)
+BEST_K=$(/nfs/chess/sw/qm2_XTEC312/bin/python -c "
+import h5py, numpy as np
+with h5py.File('results/bic_d/bic_xtec_d.h5', 'r') as f:
+    ks = f['n_clusters'][...].astype(int)
+    bics = f['bic_scores'][...].astype(float)
+best_k = int(ks[np.argmin(bics)])
+print(best_k)
+")
 
-# 3. BIC sweeps for model selection
-/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-d data.nxs -o bic_d/ --min-nc 2 --max-nc 14
-/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-s data.nxs -o bic_s/ --min-nc 2 --max-nc 14
+# 3. Final GMM clustering using optimal k* with deterministic reordering
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d data.nxs \
+  -o results/xtec_d_k${BEST_K}/ \
+  --streamed-preprocess \
+  -n ${BEST_K} \
+  --rescale mean \
+  --reorder-clusters
+```
+
+### 3.2 Standalone CLI Subcommands
+When executing individual stages or testing specific parameters:
+
+```bash
+# Standalone BIC sweep (Mode d)
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-d data.nxs -o bic_d/ --streamed-preprocess --min-nc 2 --max-nc 14
+
+# Standalone BIC sweep (Mode s with peak averaging)
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu bic-s data.nxs -o bic_s/ --streamed-preprocess --min-nc 2 --max-nc 14
+
+# Standalone direct clustering (Mode d) with known k
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d data.nxs -o results/ --streamed-preprocess -n 4 --rescale mean --reorder-clusters
+
+# Standalone peak-averaged clustering (Mode s) with known k
+/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-s data.nxs -o results/ --streamed-preprocess -n 4 --reorder-clusters
 ```
 
 ---

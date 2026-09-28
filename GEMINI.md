@@ -50,6 +50,8 @@ Beamline pipelines strictly segregate processing stages across dedicated environ
 > 6. Exact command-line parameters
 > 
 > The assistant must obtain explicit user confirmation before issuing the `qsub` submission command.
+> 
+> *XTEC GPU Batch Rule*: For XTEC-GPU clustering on `lnx4428` (`-l cuda_free=1`), scripts execute the autonomous pipeline (BIC model selection sweep $\rightarrow$ autonomous $k^* = \operatorname{argmin}_k \text{BIC}$ determination $\rightarrow$ final GMM clustering with reordering) in a single reservation. All CLI invocations on full reciprocal volumes must include `--streamed-preprocess` to prevent GPU memory exhaustion.
 
 ---
 

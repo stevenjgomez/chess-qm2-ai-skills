@@ -10,7 +10,7 @@ A modular collection of domain-specific scientific computing and synchrotron ski
 | :--- | :--- | :--- |
 | **`chess-legacy-reduction`** | [`chess-legacy-reduction/`](./chess-legacy-reduction/) | **Autonomous Beamline Reduction Pipeline**: Automates stacking raw Pilatus 6M CBF detector frames, headless orientation matrix (ORM) solving via `scipy.optimize.basinhopping`, 3D reciprocal space HKL conversion (`1rot` and `3rot`), cross-sectional plane visualization ($(HK0)$, $(H0L)$, $(0KL)$), human-in-the-loop verification gates, and Grid Engine (`qsub`) batch scheduling across AVX2-capable CLASSE nodes. Includes a turnkey Python CLI suite in `scripts/`. |
 | **`reciprocal-space-analysis`** | [`reciprocal-space-analysis/`](./reciprocal-space-analysis/) | **3D Reciprocal Space & NeXus Analysis**: Reconstruction, indexing, alignment, and slicing of 3D reciprocal space volumes (NeXus/HDF5) via `nxs_analysis_tools`. Enforces skew projections for non-orthogonal/hexagonal lattices, multi-dataset linecuts, and interactive cluster execution etiquette (`qrsh`). |
-| **`xtec-gpu-analysis`** | [`xtec-gpu-analysis/`](./xtec-gpu-analysis/) | **GPU Temperature Clustering (XTEC-GPU)**: High-throughput clustering of temperature-series scattering datasets using PyTorch and `torchgmm`. Features automated 4D NeXus compilation from 3D volumes (NXRefine and legacy CHESS) via `TempDependence.to_xtec()`, enforces cluster node etiquette (interactive CPU nodes via `qrsh` vs Grid Engine GPU queue `qsub -l cuda_free=1`), discrete Q-map visualization, and automated Markdown reporting. Includes turnkey input generation CLI in `scripts/`. |
+| **`xtec-gpu-analysis`** | [`xtec-gpu-analysis/`](./xtec-gpu-analysis/) | **GPU Temperature Clustering (XTEC-GPU)**: High-throughput clustering of temperature-series scattering datasets using PyTorch and `torchgmm`. Features automated 4D NeXus compilation from 3D volumes (NXRefine and legacy CHESS) via `TempDependence.to_xtec()`, enforces cluster node etiquette (interactive CPU nodes via `qrsh` vs Grid Engine GPU queue `qsub -l cuda_free=1`), autonomous model selection ($k^* = \operatorname{argmin}_k \text{BIC}$), mandatory streamed preprocessing (`--streamed-preprocess`) for large volumes (>24 GB), discrete Q-map visualization, and automated Markdown reporting. Includes turnkey input generation CLI in `scripts/`. |
 
 ---
 
@@ -200,7 +200,8 @@ chess-qm2-ai-skills/
 │   ├── legacy-reduction-FeTe2-5A-281-fastpath.sh
 │   ├── legacy-reduction-FeTe2-5A-batch.sh
 │   ├── xtec-prep-batch.sh
-│   └── xtec-gpu-clustering.sh
+│   ├── xtec-gpu-clustering.sh
+│   └── xtec-bic-sweep.sh
 ├── chess-legacy-reduction/
 │   ├── SKILL.md
 │   └── scripts/

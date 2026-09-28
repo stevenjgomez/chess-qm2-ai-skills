@@ -83,16 +83,19 @@ Always strictly distinguish between the machine classes on CLASSE:
 
 ## 3. End-to-End XTEC Workflow Pipeline
 
+> [!NOTE]
+> **Workflow Independence**: The algorithmic phases of the XTEC workflow (Phases 0 through 4) represent internal machine learning and clustering operations on compiled 4D scattering data. They are **completely unrelated** to the experimental/crystallographic phases in the `chess-legacy-reduction` pipeline.
+
 When a user commands **"Run XTEC on {sample}"**, execute the following lifecycle:
 
 ```text
 [User Request: "Run XTEC on {sample}"]
                  │
                  ▼
-  [Phase 0: Input Verification & Generation]
+  [Phase 0: Input Verification & Generation (CPU: qrsh or qsub)]
   ├── 1. Check if <sample_dir>/xtec_data.nxs exists.
-  │      └── Found: Proceed directly to Phase 1 (qsub -l cuda_free=1).
-  └── 2. Missing: Launch data preparation (Interactive: qrsh / Non-Interactive: qsub xtec-prep-batch.sh):
+  │      └── Found: Proceed directly to GPU clustering (qsub -l cuda_free=1).
+  └── 2. Missing: Launch data preparation (Interactive: qrsh / Batch: qsub xtec-prep-batch.sh):
          ├── Check sample leaf: nxrefine/{sample_name}/{sample_id} vs processed_old_way/...
          ├── Pre-validate stubs: verify transform.nxs > 0 bytes (skip empty stubs)
          ├── Extract scan exposure times: NeXus logs/T or raw SPEC #T
@@ -101,27 +104,34 @@ When a user commands **"Run XTEC on {sample}"**, execute the following lifecycle
          └── Compile 4D volume via TempDependence.to_xtec()
                  │
                  ▼
-      [Phase 1: Preprocessing (GPU via qsub -l cuda_free=1)]
-      ├── Mask_Zeros (filter dead pixels & gaps)
-      └── Threshold_Background (KL-divergence cutoff)
+  [Autonomous GPU Clustering Pipeline (lnx4428 via qsub -l cuda_free=1)]
+  │
+  ├── [Phase 1: Preprocessing (GPU with --streamed-preprocess)]
+  │   ├── Mask_Zeros (filter dead pixels & gaps)
+  │   └── Threshold_Background (KL-divergence cutoff streamed in ~1 GiB slabs)
+  │
+  ├── [Phase 2: Model Selection (GPU BIC Sweep)]
+  │   ├── BIC Sweep across k = 2 ... 14 (xtec-gpu bic-d)
+  │   └── Autonomous k* Determination: k* = argmin(BIC) (no manual user intervention required)
+  │
+  └── [Phase 3: Final Clustering & Ordering (GPU GMM)]
+      ├── GMM Training with optimal k* (torchgmm, kmeans++ seed)
+      └── Deterministic Sorting by descending low-T intensity (--reorder-clusters)
                  │
                  ▼
-      [Phase 2: Model Selection (GPU via qsub -l cuda_free=1)]
-      ├── BIC Sweep (k = 2 ... 14) Mode 'd' (Direct Voxel GMM)
-      ├── BIC Sweep (k = 2 ... 14) Mode 's' (Peak-Averaged GMM)
-      └── Minimum / Knee BIC Determination
-                 │
-                 ▼
-      [Phase 3: Clustering & Ordering (GPU via qsub -l cuda_free=1)]
-      ├── GMM Training (torchgmm, kmeans++ seed)
-      └── Deterministic Sorting (descending low-T intensity)
-                 │
-                 ▼
-      [Phase 4: Visualization & Reporting]
-      ├── Discrete Reciprocal-Space Q-Map (pure white background)
-      ├── Trajectory & Mean Intensity Plots (synchronized palette)
-      └── Comprehensive Markdown Report (absolute image links)
+  [Phase 4: Visualization & Reporting]
+  ├── Discrete Reciprocal-Space Q-Map (tab10/tab20, pure white unclustered, r.l.u. axes)
+  ├── Trajectory & Mean Intensity Plots (synchronized palette, legend outside)
+  └── Comprehensive Markdown Report (report.md with absolute image links)
 ```
+
+### Automated Model Selection & GPU Batch Execution (`qsub -l cuda_free=1`)
+
+1. **Autonomous $k^*$ Selection**:
+   The user does **not** need to manually inspect the intermediate BIC plot or pause the workflow. The GPU batch job autonomously evaluates the BIC curve, extracts $k^* = \operatorname{argmin}_k \text{BIC}(k)$, and trains the final GMM model within a **single continuous GPU reservation** (see [`example_job_scripts/xtec-gpu-clustering.sh`](../example_job_scripts/xtec-gpu-clustering.sh)).
+
+2. **Mandatory Streamed Preprocessing (`--streamed-preprocess`)**:
+   Full 3D synchrotron reciprocal-space temperature series routinely reach 20–50+ GB (e.g., `KV2Se2O` is 48 GB). To prevent CUDA Out-Of-Memory (OOM) errors on the 24 GB Titan RTX, `--streamed-preprocess` **MUST be included** on all `bic-d`, `bic-s`, and `xtec-d` CLI invocations. It streams spatial slabs through memory in ~1 GiB chunks to compute masks and thresholds.
 
 ### Phase 0 Details: Format Support, Metadata Verification & Modal Filtering
 

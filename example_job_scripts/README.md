@@ -13,7 +13,8 @@ All scripts execute unbuffered Python (`python -u`) so job execution logs can be
 | [`legacy-reduction-FeTe2-5A-281-fastpath.sh`](./legacy-reduction-FeTe2-5A-281-fastpath.sh) | `all.q@lnx307*,lnx311*,lnx312*,lnx313*`<br>(AVX2 CPU, 32 cores, 200 GB RAM) | **Phase 1: Warm Reference Fast-Path Reduction**: Stacks raw Pilatus CBF frames into `stack1.nxs`, runs headless orientation matrix (ORM) basinhopping, converts 1-rotation reciprocal volume (`1rot_hkli.nxs`), and renders diagnostic cross-sectional slices (`HK0`, `H0L`, `0KL`). |
 | [`legacy-reduction-FeTe2-5A-batch.sh`](./legacy-reduction-FeTe2-5A-batch.sh) | `all.q@lnx307*,lnx311*,lnx312*,lnx313*`<br>(AVX2 CPU, 32 cores, 200 GB RAM) | **Phase 2: Temperature-Series Batch Reduction**: Iterates over all remaining temperature points for the sample, reusing the verified orientation matrix from `--ref-temp` without re-solving. |
 | [`xtec-prep-batch.sh`](./xtec-prep-batch.sh) | `all.q@lnx307*,lnx311*,lnx312*,lnx313*`<br>(AVX2 CPU, 16 cores, 200 GB RAM) | **Stage 0: 4D XTEC Dataset Compilation**: Non-interactive batch wrapper for compiling 3D reciprocal volumes into 4D `xtec_data.nxs` with stub pre-validation and modal exposure filtering. Reserved for automated/agentic runs where `qrsh` hangs on Kerberos prompts. |
-| [`xtec-gpu-clustering.sh`](./xtec-gpu-clustering.sh) | `lnx4428` via `#$ -l cuda_free=1`<br>(NVIDIA Titan RTX, 24 GB VRAM) | **Phase 4: XTEC-GPU Clustering**: Executes high-throughput GMM clustering (`xtec-d`, `xtec-s`, `bic-d`, `bic-s`) on compiled 4D NeXus files using PyTorch and `torchgmm`. |
+| [`xtec-gpu-clustering.sh`](./xtec-gpu-clustering.sh) | `lnx4428` via `#$ -l cuda_free=1`<br>(NVIDIA Titan RTX, 24 GB VRAM) | **Autonomous End-to-End XTEC-GPU Workflow**: Runs Phase 1 & 2 (streamed BIC sweep across $k = 2 \dots 14$), automatically determines optimal $k^* = \operatorname{argmin}_k \text{BIC}(k)$, and executes Phase 3 (final GMM clustering with reordering) in a single GPU reservation. |
+| [`xtec-bic-sweep.sh`](./xtec-bic-sweep.sh) | `lnx4428` via `#$ -l cuda_free=1`<br>(NVIDIA Titan RTX, 24 GB VRAM) | **Standalone BIC Model Selection Sweep**: Executes only the BIC sweep ($k = 2 \dots 14$) with `--streamed-preprocess` for exploratory model complexity analysis. |
 
 ---
 
@@ -66,15 +67,23 @@ Monitors stub validity (`transform.nxs > 0 bytes`), extracts scan count times, a
 
 For temperature-series scattering datasets compiled into `xtec_data.nxs` (via `generate_xtec_input.py`), submit clustering jobs to the dedicated GPU node (`lnx4428`):
 
+### A. Autonomous End-to-End Workflow (Recommended)
+Submits a single continuous GPU job that computes the BIC sweep, automatically extracts the optimal $k^* = \operatorname{argmin}_k \text{BIC}(k)$, and performs the final GMM clustering with `--streamed-preprocess` and cluster reordering:
+
 ```bash
 qsub -l cuda_free=1 xtec-gpu-clustering.sh
 ```
 
-### Customizing Clustering Parameters:
-Edit `xtec-gpu-clustering.sh` to adjust:
-- Direct voxel GMM mode (`xtec-d`) vs. peak-averaged mode (`xtec-s`).
-- `--min-k` and `--max-k`: Range of cluster counts for model selection / BIC sweep.
-- `-o`: Output directory for clustered HDF5 results and discrete Q-map figures.
+### B. Standalone Model Selection (BIC Sweep Only)
+If you only wish to compute and inspect the BIC score curve without running final clustering:
+
+```bash
+qsub -l cuda_free=1 xtec-bic-sweep.sh
+```
+
+### Critical GPU Execution Notes:
+- **Mandatory Streaming (`--streamed-preprocess`)**: Full 3D reciprocal volumes (20–50+ GB) exceed the 24 GB Titan RTX VRAM. All production job scripts must include `--streamed-preprocess` to stream data in ~1 GiB slabs and prevent CUDA OOM crashes.
+- **Auto-$k^*$ Extraction**: `xtec-gpu-clustering.sh` eliminates the need to manually inspect intermediate BIC plots; it mathematically determines $k^*$ and clusters in a single allocation.
 
 ---
 
