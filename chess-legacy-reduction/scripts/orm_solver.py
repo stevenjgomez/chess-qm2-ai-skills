@@ -111,10 +111,14 @@ def generate_histogram(projectdir, stack_file):
     gc.collect()
 
 
-def get_peaklist(projectdir, stack_file, valmin=0.9, valmax=1.0, lower_bound=50, upper_bound=150):
+def get_peaklist(projectdir, stack_file, valmin=0.01, valmax=1.0, lower_bound=50, upper_bound=150, min_dist_px=9):
     """
-    Adaptive peak finding within threshold intensity ranges.
+    Find distinct local peak centroids across the 3D CBF stack using
+    frame-by-frame 2D local maximum filtering and 3D non-maximum suppression.
+    Ensures peaks represent diverse, distinct Bragg reflections rather than
+    clusters of adjacent pixels from a single saturated peak.
     """
+    from scipy.ndimage import maximum_filter
     nxsetmemory(100000)
     stack_path = os.path.join(projectdir, stack_file)
     print(f"Loading stack for peak finding: {stack_path}")
@@ -123,59 +127,51 @@ def get_peaklist(projectdir, stack_file, valmin=0.9, valmax=1.0, lower_bound=50,
     peaksmax = np.max(Iall)
     print(f"Max intensity is {peaksmax}")
 
-    percofmax = float(valmax)
-    percofmin = float(valmin)
-    lower_bound = float(lower_bound)
-    upper_bound = float(upper_bound)
+    n_frames = Iall.shape[2]
+    print(f"Scanning {n_frames} phi frames for local maxima (min_dist={min_dist_px}px)...")
 
-    if percofmax != 1.0:
-        peaks = np.logical_and(Iall < percofmax * peaksmax, Iall > percofmin * peaksmax)
-    else:
-        peaks = Iall > percofmin * peaksmax
+    # Step 1: Detect 2D local maxima per phi frame
+    footprint = np.ones((min_dist_px, min_dist_px), dtype=bool)
+    frame_peaks = []
+    for f_idx in range(n_frames):
+        frame = Iall[:, :, f_idx]
+        if np.max(frame) < 1000:
+            continue
+        is_max = (frame == maximum_filter(frame, footprint=footprint)) & (frame > 1000)
+        coords = np.argwhere(is_max)
+        for c in coords:
+            frame_peaks.append((int(c[0]), int(c[1]), f_idx, float(frame[c[0], c[1]])))
 
-    listofpeaks = np.asarray(np.where(peaks)).T
-    print(f"Initial peaks found: {len(listofpeaks)} (target range: {lower_bound} - {upper_bound})")
+    print(f"Found {len(frame_peaks)} total candidate 2D peaks (> 1000 counts).")
+    if not frame_peaks:
+        raise ValueError(f"No peaks found in {stack_path} above noise floor (1000 counts).")
 
-    # Adaptive decrement if too few peaks
-    while len(listofpeaks) < lower_bound and percofmin > 0.05:
-        percofmin -= 0.1
-        if percofmin < 0.01:
-            percofmin = 0.01
-        print(f"Not enough peaks ({len(listofpeaks)}). Decreasing threshold to: {percofmin:.3f}")
-        gc.collect()
-        if percofmax != 1.0:
-            peaks = np.logical_and(Iall < percofmax * peaksmax, Iall > percofmin * peaksmax)
-        else:
-            peaks = Iall > percofmin * peaksmax
-        listofpeaks = np.asarray(np.where(peaks)).T
+    # Step 2: Merge peaks across adjacent phi frames (within +/- 2 frames and +/- 5 pixels)
+    # Sort descending by intensity so brightest centroid takes priority
+    frame_peaks.sort(key=lambda x: x[3], reverse=True)
+    merged_peaks = []
+    used = set()
+    for i, p in enumerate(frame_peaks):
+        if i in used:
+            continue
+        merged_peaks.append(p)
+        for j in range(i + 1, len(frame_peaks)):
+            if j in used:
+                continue
+            pj = frame_peaks[j]
+            if abs(p[2] - pj[2]) <= 2 and abs(p[0] - pj[0]) <= 5 and abs(p[1] - pj[1]) <= 5:
+                used.add(j)
 
-    # Adaptive increment if too many peaks
-    if len(listofpeaks) > upper_bound:
-        while len(listofpeaks) > upper_bound and percofmin < percofmax:
-            percofmin += 0.02
-            print(f"Too many peaks ({len(listofpeaks)}). Increasing threshold to: {percofmin:.3f}")
-            if percofmax != 1.0:
-                peaks = np.logical_and(Iall < percofmax * peaksmax, Iall > percofmin * peaksmax)
-            else:
-                peaks = Iall > percofmin * peaksmax
-            listofpeaks = np.asarray(np.where(peaks)).T
+    print(f"Distinct 3D reflections after angular/spatial merging: {len(merged_peaks)}")
 
-        # Fine-tune if it dropped below lower bound
-        if len(listofpeaks) < lower_bound:
-            while len(listofpeaks) < lower_bound and percofmin > 0.01:
-                percofmin -= 0.01
-                print(f"Fine-tuning: increasing sensitivity to: {percofmin:.3f}")
-                gc.collect()
-                if percofmax != 1.0:
-                    peaks = np.logical_and(Iall < percofmax * peaksmax, Iall > percofmin * peaksmax)
-                else:
-                    peaks = Iall > percofmin * peaksmax
-                listofpeaks = np.asarray(np.where(peaks)).T
+    # Select top distinct peaks up to upper_bound
+    selected = merged_peaks[:upper_bound]
+    listofpeaks = np.array([[p[0], p[1], p[2]] for p in selected], dtype=int)
 
-    print(f"Final peaks selected: {len(listofpeaks)}")
+    print(f"Final distinct reflections selected: {len(listofpeaks)} (intensities: {selected[-1][3]:.0f} to {selected[0][3]:.0f} counts)")
     peakfile = os.path.join(projectdir, "peaklist1.npy")
     np.save(peakfile, listofpeaks)
-    print(f"Saved peaklist to {peakfile}")
+    print(f"Saved distinct peaklist to {peakfile}")
     del Iall, stack
     gc.collect()
     return peakfile, len(listofpeaks)
@@ -221,7 +217,7 @@ def calcUB(eu1, eu2, eu3, UB):
     return UBR
 
 
-def find_euler(projectdir, stack_file, uca, ucb, ucc, ucal, ucbe, ucga, hkl_module, fixed_euler=None):
+def find_euler(projectdir, stack_file, uca, ucb, ucc, ucal, ucbe, ucga, hkl_module, fixed_euler=None, init_euler=None):
     """Optimize Euler angles against peak positions using Basinhopping, or apply fixed angles."""
     stack_path = os.path.join(projectdir, stack_file)
     w = nxload(stack_path)
@@ -275,8 +271,10 @@ def find_euler(projectdir, stack_file, uca, ucb, ucc, ucal, ucbe, ucga, hkl_modu
         eu_final = np.array(fixed_euler, dtype=float)
         logging.info(f"Using fixed Euler angles: {eu_final}")
     else:
-        # Preliminary fit if more than 75 peaks
-        if peaknum > 75:
+        if init_euler is not None:
+            x0 = np.array(init_euler, dtype=float)
+            logging.info(f"Seeding optimization with provided initial Euler guess: {x0}")
+        elif peaknum > 75:
             shortpeaklist = peaklist[:20]
             x0 = [0, 0, 0]
             logging.info("Preliminary fitting on first 20 peaks (config A)...")
@@ -382,6 +380,10 @@ def main():
     parser.add_argument("--skip-peaks", action="store_true", help="Skip peak finding if peaklist1.npy exists")
     parser.add_argument("--fixed-euler", type=str, default=None,
                         help="Skip optimization and apply fixed Euler angles 'e0,e1,e2'")
+    parser.add_argument("--init-euler", type=str, default=None,
+                        help="Initial Euler angle guess 'e0,e1,e2' to seed basinhopping optimization")
+    parser.add_argument("--min-dist-px", type=int, default=9,
+                        help="Minimum pixel distance for local maxima filtering (default: 9px)")
 
     args = parser.parse_args()
 
@@ -415,14 +417,19 @@ def main():
     peakfile = os.path.join(projectdir, "peaklist1.npy")
     if not (args.skip_peaks and os.path.exists(peakfile)):
         get_peaklist(projectdir, stack_file, valmin=args.valmin, valmax=args.valmax,
-                     lower_bound=args.lower_bound, upper_bound=args.upper_bound)
+                     lower_bound=args.lower_bound, upper_bound=args.upper_bound,
+                     min_dist_px=args.min_dist_px)
 
     # Orient
     fixed_eu = None
     if args.fixed_euler:
         fixed_eu = [float(x.strip()) for x in args.fixed_euler.split(",") if x.strip()]
+    init_eu = None
+    if args.init_euler:
+        init_eu = [float(x.strip()) for x in args.init_euler.split(",") if x.strip()]
     UBRfinal, eu_angles, mean_dev, peaknum = find_euler(
-        projectdir, stack_file, uca, ucb, ucc, ucal, ucbe, ucga, hkl_module, fixed_euler=fixed_eu
+        projectdir, stack_file, uca, ucb, ucc, ucal, ucbe, ucga, hkl_module,
+        fixed_euler=fixed_eu, init_euler=init_eu
     )
 
     # Save
