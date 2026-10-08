@@ -86,6 +86,10 @@ This skill defines the operational standards, path conventions, cluster etiquett
    - > Synchrotron raw CBF stacks and reciprocal space volumes represent irreplaceable beamtime and compute resources.
    - > **Automatic Integer Suffixing**: The legacy reduction scripts (`Pil6M_HKLConv_3D_2022_1rot.py` and `3rot.py`) natively check `while os.path.exists(workingdir + file_name):` and automatically append an integer suffix (`1rot_hkli_1.nxs`, `1rot_hkli_2.nxs`, etc.) if a target file already exists.
    - > If re-running conversion with different limits or forced modes (`--force-hkl`), always allow the pipeline to generate a newly suffixed file rather than deleting prior reconstructions.
+8. **Mandatory Lazy Slicing Protocol (No Eager Full-Volume Reads)**:
+   - Accessing hierarchical NeXus attributes (such as `data = nx_obj.entry.data` or `counts = data.counts`) is purely a lazy tree traversal that maintains `_value = None` without loading array data into RAM.
+   - Slicing 3D reciprocal space volumes for cross-sectional visualization or diagnostic cuts must strictly be performed lazily via hyperslab indexing (e.g. `counts[:, :, slice_span]` or `data[:, :, 0.0]`), reading only the targeted 2D hyperslab directly from disk via HDF5 chunking.
+   - **Never** call `.nxdata` or `np.asarray` on an unsliced 3D dataset, and never pass an unsliced 3D `NXdata` to `plot_slice(data, sum_axis=...)` (which triggers `raw_data = data.nxsignal.nxdata` internally, causing out-of-memory aborts on cluster nodes).
 
 ---
 

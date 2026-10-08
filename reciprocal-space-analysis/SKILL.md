@@ -183,6 +183,13 @@ All 2D reciprocal space slice plots must include default grid lines and integer 
   ```
 - **Major and Minor Ticks**: Major ticks are placed strictly on integer multiples (`MultipleLocator`), while minor ticks are mandatory on every single integer.
 
+### 3.8 Mandatory Lazy Slicing Protocol (No Eager Full-Volume Reads)
+- **Hierarchy Traversal is Lazy**: Assigning `data = nx_obj.entry.data` or querying child fields (`data.counts`) does **not** load array data. The `NXfield` object retains `_value = None` and only holds an HDF5 dataset reference.
+- **Eager Reading Traps**:
+  - Calling `.nxdata` directly on the unsliced 3D field (`data.counts.nxdata`, `data.nxsignal.nxdata`).
+  - Passing a full 3D `NXdata` to `plot_slice(data, sum_axis=...)`. Because `plot_slice()` executes `raw_data = data.nxsignal.nxdata` internally when `sum_axis` is specified, it eagerly reads the entire 3D volume into memory.
+- **Mandatory Protocol**: Always extract 2D hyperslabs lazily before plotting or downstream calculation (e.g. `data[:, :, 0.0]`, `counts_field[:, :, slice_span]`, or `Scissors.cut_data()`). Slicing delegates to HDF5 chunked reading, loading only the requested 2D plane into memory.
+
 ---
 
 ## 4. Beamline Lifecycle Integration & Sister Skills
