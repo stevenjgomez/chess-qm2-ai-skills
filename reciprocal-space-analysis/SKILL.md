@@ -157,6 +157,32 @@ Because NXRefine and Legacy CHESS data structures use different axis ordering co
     ```
   - This ensures that $1\text{ \AA}^{-1}$ occupies the exact same screen pixel length in every physical direction, preserving circular diffuse scattering rings and preventing elongation along the $L$ axis.
 
+### 3.7 Default Crystallographic Grid Lines & Integer Ticks Standards
+All 2D reciprocal space slice plots must include default grid lines and integer tick formatting:
+- **Skew-Aligned Grid Lines (Matching Crystallographic Axes)**:
+  Under sheared projections (`skew_angle != 90`), standard Cartesian `ax.grid()` draws erroneous orthogonal lines. Instead, render grid lines in reciprocal data coordinates transformed via `quadmesh.get_transform()` so they strictly follow the true crystallographic `skew_angle` (e.g. $60^\circ$ for hexagonal $HK$):
+  ```python
+  from matplotlib.ticker import MultipleLocator
+  from matplotlib.collections import LineCollection
+
+  # 1. Ticks: Major on integers, Minor mandatory on every integer (1.0)
+  ax.xaxis.set_major_locator(MultipleLocator(2 if (xmax - xmin) > 8 else 1))
+  ax.xaxis.set_minor_locator(MultipleLocator(1))
+  ax.yaxis.set_major_locator(MultipleLocator(2 if (ymax - ymin) > 8 else 1))
+  ax.yaxis.set_minor_locator(MultipleLocator(1))
+  ax.tick_params(direction='in', top=True, right=True, which='both')
+
+  # 2. Skew-aligned grid lines matching data coordinate transform
+  trans = im.get_transform()
+  h_ints = np.arange(int(np.ceil(xmin)), int(np.floor(xmax)) + 1, 1)
+  k_ints = np.arange(int(np.ceil(ymin)), int(np.floor(ymax)) + 1, 1)
+  h_lines = [[(h, ymin), (h, ymax)] for h in h_ints]
+  k_lines = [[(xmin, k), (xmax, k)] for k in k_ints]
+  lc = LineCollection(h_lines + k_lines, transform=trans, colors='gray', linestyles='--', linewidths=0.5, alpha=0.5, zorder=2)
+  ax.add_collection(lc)
+  ```
+- **Major and Minor Ticks**: Major ticks are placed strictly on integer multiples (`MultipleLocator`), while minor ticks are mandatory on every single integer.
+
 ---
 
 ## 4. Beamline Lifecycle Integration & Sister Skills

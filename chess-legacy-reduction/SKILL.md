@@ -68,8 +68,7 @@ This skill defines the operational standards, path conventions, cluster etiquett
      ```bash
      /nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python
      ```
-     The diagnostic visualizer (`slice_visualizer.py`) automatically re-executes itself inside this environment to leverage `nxs_analysis_tools.plot_slice()` with dynamic crystallographic skew angles (e.g. `skew_angle=60°` for hexagonal $HK$).
-     The diagnostic visualizer (`slice_visualizer.py`) automatically re-executes itself inside this environment to leverage `nxs_analysis_tools.plot_slice()` with dynamic crystallographic skew angles (e.g. `skew_angle=60°` for hexagonal $HK$).
+     The diagnostic visualizer (`slice_visualizer.py`) automatically re-executes itself inside this environment to leverage `nxs_analysis_tools.plot_slice()` with dynamic crystallographic skew angles (e.g. `skew_angle=60°` for hexagonal $HK$). All diagnostic slice plots enforce default integer-aligned ticks and crystallographic grid lines reflecting the exact `skew_angle`.
 4. **Headless Execution**:
    - Always set `matplotlib.use("Agg")` prior to importing `pyplot` to prevent display connection errors during remote runs.
 5. **NeXus Memory Configuration**:
@@ -164,10 +163,14 @@ Standard path patterns at CHESS ID4B:
    - > **Runtime Expectation**: ORM solving involves multi-stage non-linear basinhopping with local BFGS iterations over dozens of reflections and can take **from tens of minutes up to several hours**. Submitting as a batch job via `qsub` is strictly required to decouple from local client uptime.
    - Export `ormatrix_auto.nxs`, `peaklist1.npy`, and `ormfinder.log`.
 4. **1-Rotation HKL Conversion**: Execute `Pil6M_HKLConv_3D_2022_1rot.py` to produce `1rot_hkli.nxs`.
-5. **Cross-Sectional Visualization**: Slice the 3D volume lazily using `slice_visualizer.py` with `nxs_analysis_tools.plot_slice()` under `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/` with physical reciprocal lattice aspect ratio calibration:
+5. **Cross-Sectional Visualization**: Slice the 3D volume lazily using `slice_visualizer.py` with `nxs_analysis_tools.plot_slice()` under `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/` with physical reciprocal lattice aspect ratio calibration and mandatory grid/tick formatting:
    - $(HK0)$: Central cut along $L$, sheared by dynamic crystallographic skew angle $\gamma^*$ (e.g. `skew_angle=60°` for hexagonal lattices) and aspect-scaled by $b^*/a^* \times \text{ax.get\_aspect()}$.
    - $(H0L)$: Central cut along $K$, with skew angle $\beta^*$ and aspect-scaled by $c^*/a^* \times \text{ax.get\_aspect()}$ (eliminates artificial vertical stretching along $L$).
    - $(0KL)$: Central cut along $H$, with skew angle $\alpha^*$ and aspect-scaled by $c^*/b^* \times \text{ax.get\_aspect()}$.
+   - **Default Gridlines & Integer Tick Standards (Mandatory for All Cases)**:
+     - **Skew-Aligned Grid Lines**: Grid lines are rendered via `LineCollection` transformed by `quadmesh.get_transform()` so that lines of constant reciprocal lattice coordinates strictly reflect the crystallographic `skew_angle` (e.g. $60^\circ$ for hexagonal $HK$, orthogonal for $HL/KL$).
+     - **Major Ticks on Integers**: Major tick locators are strictly placed on integer multiples (using `MultipleLocator(2)` for spans $>8$, or `MultipleLocator(1)`).
+     - **Minor Ticks on Every Integer**: Minor tick marks are mandatory on every integer (`MultipleLocator(1)`).
    Save as `slice_HK.png`, `slice_HL.png`, `slice_KL.png`, and `slices_summary.png`.
 6. **User Verification Gate**: Present cross-sectional slice figures to the user. **Wait for user confirmation** before proceeding.
    Record confirmation into `pipeline_status.json`:

@@ -26,8 +26,58 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from matplotlib.ticker import MultipleLocator
+from matplotlib.collections import LineCollection
+
 from nexusformat.nexus import nxload, NXdata, NXfield, nxsetmemory
 from nxs_analysis_tools import plot_slice, reciprocal_lattice_params
+
+
+def apply_grid_and_ticks(ax, quadmesh, x_bounds, y_bounds, major_step=None, grid_color="gray", grid_alpha=0.5):
+    """
+    Apply integer-aligned major/minor ticks and skew-aligned grid lines to a plot_slice() axis.
+
+    Formatting requirements (default for all cases):
+    1. Major ticks: placed strictly on integers (MultipleLocator, default 2 if span > 8 else 1).
+    2. Minor ticks: mandatory on every integer (MultipleLocator(1)).
+    3. Grid lines: rendered via LineCollection transformed by quadmesh.get_transform() so that
+       lines of constant reciprocal lattice coordinates strictly reflect the crystallographic skew_angle.
+    """
+    xmin, xmax = x_bounds
+    ymin, ymax = y_bounds
+
+    x_span = xmax - xmin
+    y_span = ymax - ymin
+
+    x_major = major_step if major_step is not None else (2 if x_span > 8 else 1)
+    y_major = major_step if major_step is not None else (2 if y_span > 8 else 1)
+
+    # 1. Ticks: Major on integers, Minor mandatory on every integer
+    ax.xaxis.set_major_locator(MultipleLocator(x_major))
+    ax.xaxis.set_minor_locator(MultipleLocator(1))
+    ax.yaxis.set_major_locator(MultipleLocator(y_major))
+    ax.yaxis.set_minor_locator(MultipleLocator(1))
+    ax.tick_params(direction='in', top=True, right=True, which='both')
+
+    # 2. Skew-aligned grid lines in reciprocal data coordinates
+    trans = quadmesh.get_transform()
+
+    h_ints = np.arange(int(np.ceil(xmin)), int(np.floor(xmax)) + 1, 1)
+    k_ints = np.arange(int(np.ceil(ymin)), int(np.floor(ymax)) + 1, 1)
+
+    h_lines = [[(h, ymin), (h, ymax)] for h in h_ints]
+    k_lines = [[(xmin, k), (xmax, k)] for k in k_ints]
+
+    lc = LineCollection(
+        h_lines + k_lines,
+        transform=trans,
+        colors=grid_color,
+        linestyles='--',
+        linewidths=0.5,
+        alpha=grid_alpha,
+        zorder=2
+    )
+    ax.add_collection(lc)
 
 
 def get_reciprocal_parameters(unit_cell_str):
@@ -85,6 +135,9 @@ def main():
     parser.add_argument("--vmin", type=float, default=None, help="Colorbar lower cutoff")
     parser.add_argument("--vmax", type=float, default=None, help="Colorbar upper cutoff")
     parser.add_argument("--cmap", default="turbo", help="Colormap name (default 'turbo')")
+    parser.add_argument("--grid-color", default="gray", help="Grid line color (default 'gray')")
+    parser.add_argument("--grid-alpha", type=float, default=0.5, help="Grid line alpha (default 0.5)")
+    parser.add_argument("--no-grid", action="store_true", help="Disable grid lines")
 
     args = parser.parse_args()
 
@@ -126,9 +179,9 @@ def main():
 
     print(f"Volume linked. Dimensions: H={len(H)}, K={len(K)}, L={len(L)}")
 
-    h_bounds = (-args.hlim, args.hlim) if args.hlim is not None else None
-    k_bounds = (-args.klim, args.klim) if args.klim is not None else None
-    l_bounds = (-args.llim, args.llim) if args.llim is not None else None
+    h_bounds = (-args.hlim, args.hlim) if args.hlim is not None else (float(np.min(H)), float(np.max(H)))
+    k_bounds = (-args.klim, args.klim) if args.klim is not None else (float(np.min(K)), float(np.max(K)))
+    l_bounds = (-args.llim, args.llim) if args.llim is not None else (float(np.min(L)), float(np.max(L)))
 
     # Extract 2D slices lazily from HDF5
     hk_slice = extract_lazy_slice(counts_field, L, axis_idx=2, center=args.l_center, thickness=args.thickness)
@@ -164,7 +217,7 @@ def main():
     # 1. HK Plane with skew_angle = gamma_star (e.g. 60° for hexagonal)
     hk_out = os.path.join(outdir, "slice_HK.png")
     fig, ax = plt.subplots(figsize=(6, 5), dpi=200)
-    plot_slice(
+    p_hk = plot_slice(
         nx_hk,
         skew_angle=gamma_star,
         ax=ax,
@@ -179,6 +232,8 @@ def main():
     )
     # Apply physical reciprocal aspect ratio correction
     ax.set_aspect(ax.get_aspect() * (b_star / a_star))
+    if not args.no_grid:
+        apply_grid_and_ticks(ax, p_hk, h_bounds, k_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
     fig.savefig(hk_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {hk_out}")
@@ -186,7 +241,7 @@ def main():
     # 2. HL Plane with skew_angle = beta_star (90°)
     hl_out = os.path.join(outdir, "slice_HL.png")
     fig, ax = plt.subplots(figsize=(6, 5), dpi=200)
-    plot_slice(
+    p_hl = plot_slice(
         nx_hl,
         skew_angle=beta_star,
         ax=ax,
@@ -201,6 +256,8 @@ def main():
     )
     # Apply physical reciprocal aspect ratio correction
     ax.set_aspect(ax.get_aspect() * (c_star / a_star))
+    if not args.no_grid:
+        apply_grid_and_ticks(ax, p_hl, h_bounds, l_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
     fig.savefig(hl_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {hl_out}")
@@ -208,7 +265,7 @@ def main():
     # 3. KL Plane with skew_angle = alpha_star (90°)
     kl_out = os.path.join(outdir, "slice_KL.png")
     fig, ax = plt.subplots(figsize=(6, 5), dpi=200)
-    plot_slice(
+    p_kl = plot_slice(
         nx_kl,
         skew_angle=alpha_star,
         ax=ax,
@@ -223,6 +280,8 @@ def main():
     )
     # Apply physical reciprocal aspect ratio correction
     ax.set_aspect(ax.get_aspect() * (c_star / b_star))
+    if not args.no_grid:
+        apply_grid_and_ticks(ax, p_kl, k_bounds, l_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
     fig.savefig(kl_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {kl_out}")
@@ -231,19 +290,25 @@ def main():
     summary_out = os.path.join(outdir, "slices_summary.png")
     summary_fig, axes = plt.subplots(1, 3, figsize=(18, 5), dpi=200)
 
-    plot_slice(nx_hk, skew_angle=gamma_star, ax=axes[0], logscale=True, vmin=c_min, vmax=c_max,
-               xlim=h_bounds, ylim=k_bounds, title=f"HK (L={args.l_center:g}, skew={gamma_star:.0f}°)", cmap=args.cmap, cbar=False)
+    p0 = plot_slice(nx_hk, skew_angle=gamma_star, ax=axes[0], logscale=True, vmin=c_min, vmax=c_max,
+                    xlim=h_bounds, ylim=k_bounds, title=f"HK (L={args.l_center:g}, skew={gamma_star:.0f}°)", cmap=args.cmap, cbar=False)
     axes[0].set_aspect(axes[0].get_aspect() * (b_star / a_star))
+    if not args.no_grid:
+        apply_grid_and_ticks(axes[0], p0, h_bounds, k_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
 
-    plot_slice(nx_hl, skew_angle=beta_star, ax=axes[1], logscale=True, vmin=c_min, vmax=c_max,
-               xlim=h_bounds, ylim=l_bounds, title=f"HL (K={args.k_center:g}, skew={beta_star:.0f}°)" if beta_star != 90.0 else f"HL (K={args.k_center:g})",
-               cmap=args.cmap, cbar=False)
+    p1 = plot_slice(nx_hl, skew_angle=beta_star, ax=axes[1], logscale=True, vmin=c_min, vmax=c_max,
+                    xlim=h_bounds, ylim=l_bounds, title=f"HL (K={args.k_center:g}, skew={beta_star:.0f}°)" if beta_star != 90.0 else f"HL (K={args.k_center:g})",
+                    cmap=args.cmap, cbar=False)
     axes[1].set_aspect(axes[1].get_aspect() * (c_star / a_star))
+    if not args.no_grid:
+        apply_grid_and_ticks(axes[1], p1, h_bounds, l_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
 
     im_last = plot_slice(nx_kl, skew_angle=alpha_star, ax=axes[2], logscale=True, vmin=c_min, vmax=c_max,
                          xlim=k_bounds, ylim=l_bounds, title=f"KL (H={args.h_center:g}, skew={alpha_star:.0f}°)" if alpha_star != 90.0 else f"KL (H={args.h_center:g})",
                          cmap=args.cmap, cbar=False)
     axes[2].set_aspect(axes[2].get_aspect() * (c_star / b_star))
+    if not args.no_grid:
+        apply_grid_and_ticks(axes[2], im_last, k_bounds, l_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
 
     summary_fig.subplots_adjust(right=0.88, wspace=0.3)
     cbar_ax = summary_fig.add_axes([0.90, 0.20, 0.015, 0.60])
