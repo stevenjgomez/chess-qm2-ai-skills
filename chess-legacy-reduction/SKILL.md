@@ -90,6 +90,12 @@ This skill defines the operational standards, path conventions, cluster etiquett
    - Accessing hierarchical NeXus attributes (such as `data = nx_obj.entry.data` or `counts = data.counts`) is purely a lazy tree traversal that maintains `_value = None` without loading array data into RAM.
    - Slicing 3D reciprocal space volumes for cross-sectional visualization or diagnostic cuts must strictly be performed lazily via hyperslab indexing (e.g. `counts[:, :, slice_span]` or `data[:, :, 0.0]`), reading only the targeted 2D hyperslab directly from disk via HDF5 chunking.
    - **Never** call `.nxdata` or `np.asarray` on an unsliced 3D dataset, and never pass an unsliced 3D `NXdata` to `plot_slice(data, sum_axis=...)` (which triggers `raw_data = data.nxsignal.nxdata` internally, causing out-of-memory aborts on cluster nodes).
+9. **Predicted End-Time Job Monitoring & Wakeup Protocol**:
+   - Rather than high-frequency polling or blind recurring cron checks (e.g. every 5 minutes), the agent must dynamically estimate the predicted completion time of the running step based on the observed execution rate (e.g. frames processed per minute during CBF conversion, or iterations per minute during basinhopping).
+   - Compute remaining work:
+     $$\Delta t_{\text{est}} = \frac{N_{\text{total}} - N_{\text{current}}}{\text{rate}} + t_{\text{post}}$$
+     where $t_{\text{post}}$ accounts for file writes and downstream visualization steps.
+   - Set a single-shot timer (`schedule` with `DurationSeconds`) timed to wake up near the predicted completion time. This avoids excessive cluster queries, unneeded wakeups, and unnecessary log reads while keeping the user informed of the exact estimated completion time.
 
 ---
 
