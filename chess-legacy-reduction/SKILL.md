@@ -161,7 +161,11 @@ Standard path patterns at CHESS ID4B:
 1. **Identify Warmest Temperature**: Sort temperature folders numerically and select the maximum $T$ (e.g., $281\text{ K}$).
 2. **Stack Rotation 1 Only**: Run `stack_em_all.py` on the first scan folder of the warmest temperature to produce `stack1.nxs`.
 3. **Headless ORM Solving**: Run the headless orientation solver (`orm_solver.py`):
-   - Adaptive peak finding between bounds (`valmin`, `lower_bound`, `upper_bound`).
+   - Adaptive peak finding between bounds (`valmin`, `lower_bound`, `upper_bound`):
+     - **Default Threshold Adjustment (`--threshold-method increment`)**: Linear stepping (`-= 0.1` decrement if below lower bound, `+= 0.02` increment if above upper bound, `-= 0.01` fine-tuning) preserved as the standard default behavior.
+     - **Bifurcation / Bisection Search (`--bisection` or `--threshold-method bisection`)**: Flagged option that activates geometric interval halving, converging on the target peak count in $\le 10$ steps without oscillation.
+     - **Spatial Local Maxima Filtering (`--use-local-max`)**: Flagged option to detect distinct 3D reflection centroids via frame-by-frame 2D local maxima filtering and 3D non-maximum suppression.
+     - **Seeded Basinhopping (`--init-euler "e0,e1,e2"`)**: Seeds optimization from a known orientation guess rather than origin.
    - Euler angle optimization via `scipy.optimize.basinhopping` and `hkl.Calc_HKL`.
    - > [!NOTE]
    - > **Runtime Expectation**: ORM solving involves multi-stage non-linear basinhopping with local BFGS iterations over dozens of reflections and can take **from tens of minutes up to several hours**. Submitting as a batch job via `qsub` is strictly required to decouple from local client uptime.

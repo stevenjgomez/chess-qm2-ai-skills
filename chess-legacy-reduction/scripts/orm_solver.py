@@ -111,7 +111,95 @@ def generate_histogram(projectdir, stack_file):
     gc.collect()
 
 
-def get_peaklist(projectdir, stack_file, valmin=0.01, valmax=1.0, lower_bound=50, upper_bound=150, min_dist_px=9):
+def get_peaklist_threshold(projectdir, stack_file, valmin=0.9, valmax=1.0, lower_bound=50, upper_bound=150, method="increment"):
+    """
+    Adaptive peak finding within threshold intensity ranges.
+    Methods:
+      - 'increment' (default legacy): Linear stepping (-= 0.1, += 0.02, -= 0.01).
+      - 'bisection': Geometric bifurcation / bisection interval halving.
+    """
+    nxsetmemory(100000)
+    stack_path = os.path.join(projectdir, stack_file)
+    print(f"Loading stack for peak finding: {stack_path}")
+    stack = nxload(stack_path)
+    Iall = stack.data.counts.nxdata
+    peaksmax = np.max(Iall)
+    print(f"Max intensity is {peaksmax}")
+
+    percofmax = float(valmax)
+    percofmin = float(valmin)
+    lower_bound = float(lower_bound)
+    upper_bound = float(upper_bound)
+
+    def eval_thresh(pmin):
+        if percofmax != 1.0:
+            peaks = np.logical_and(Iall < percofmax * peaksmax, Iall > pmin * peaksmax)
+        else:
+            peaks = Iall > pmin * peaksmax
+        return np.asarray(np.where(peaks)).T
+
+    listofpeaks = eval_thresh(percofmin)
+    print(f"Initial peaks found: {len(listofpeaks)} (target range: {lower_bound} - {upper_bound})")
+
+    if method == "bisection":
+        print(f"Using bifurcation (bisection) threshold search in range [{lower_bound}, {upper_bound}]...")
+        t_low = 0.01
+        t_high = percofmax
+        if len(listofpeaks) < lower_bound:
+            t_high = percofmin
+        else:
+            t_low = percofmin
+
+        for step in range(12):
+            count = len(listofpeaks)
+            print(f"Bifurcation step {step+1}: threshold={percofmin:.4f}, peaks={count}")
+            if lower_bound <= count <= upper_bound:
+                print(f"Bifurcation converged with {count} peaks!")
+                break
+            if count > upper_bound:
+                # Too many peaks -> increase threshold to narrow range
+                t_low = percofmin
+            else:
+                # Too few peaks -> decrease threshold to widen range
+                t_high = percofmin
+            percofmin = (t_low + t_high) / 2.0
+            gc.collect()
+            listofpeaks = eval_thresh(percofmin)
+    else:
+        # Default legacy behavior: linear increment and decrement
+        while len(listofpeaks) < lower_bound and percofmin > 0.05:
+            percofmin -= 0.1
+            if percofmin < 0.01:
+                percofmin = 0.01
+            print(f"Not enough peaks ({len(listofpeaks)}). Decreasing threshold to: {percofmin:.3f}")
+            gc.collect()
+            listofpeaks = eval_thresh(percofmin)
+
+        # Adaptive increment if too many peaks (making range smaller)
+        if len(listofpeaks) > upper_bound:
+            while len(listofpeaks) > upper_bound and percofmin < percofmax:
+                percofmin += 0.02
+                print(f"Too many peaks ({len(listofpeaks)}). Increasing threshold to: {percofmin:.3f}")
+                listofpeaks = eval_thresh(percofmin)
+
+            # Fine-tune if it dropped below lower bound
+            if len(listofpeaks) < lower_bound:
+                while len(listofpeaks) < lower_bound and percofmin > 0.01:
+                    percofmin -= 0.01
+                    print(f"Fine-tuning: increasing sensitivity to: {percofmin:.3f}")
+                    gc.collect()
+                    listofpeaks = eval_thresh(percofmin)
+
+    print(f"Final peaks selected: {len(listofpeaks)} (final threshold: {percofmin:.4f})")
+    peakfile = os.path.join(projectdir, "peaklist1.npy")
+    np.save(peakfile, listofpeaks)
+    print(f"Saved peaklist to {peakfile}")
+    del Iall, stack
+    gc.collect()
+    return peakfile, len(listofpeaks)
+
+
+def get_peaklist_local_max(projectdir, stack_file, lower_bound=50, upper_bound=150, min_dist_px=9):
     """
     Find distinct local peak centroids across the 3D CBF stack using
     frame-by-frame 2D local maximum filtering and 3D non-maximum suppression.
@@ -121,7 +209,7 @@ def get_peaklist(projectdir, stack_file, valmin=0.01, valmax=1.0, lower_bound=50
     from scipy.ndimage import maximum_filter
     nxsetmemory(100000)
     stack_path = os.path.join(projectdir, stack_file)
-    print(f"Loading stack for peak finding: {stack_path}")
+    print(f"Loading stack for local maxima peak finding: {stack_path}")
     stack = nxload(stack_path)
     Iall = stack.data.counts.nxdata
     peaksmax = np.max(Iall)
@@ -147,7 +235,6 @@ def get_peaklist(projectdir, stack_file, valmin=0.01, valmax=1.0, lower_bound=50
         raise ValueError(f"No peaks found in {stack_path} above noise floor (1000 counts).")
 
     # Step 2: Merge peaks across adjacent phi frames (within +/- 2 frames and +/- 5 pixels)
-    # Sort descending by intensity so brightest centroid takes priority
     frame_peaks.sort(key=lambda x: x[3], reverse=True)
     merged_peaks = []
     used = set()
@@ -163,8 +250,6 @@ def get_peaklist(projectdir, stack_file, valmin=0.01, valmax=1.0, lower_bound=50
                 used.add(j)
 
     print(f"Distinct 3D reflections after angular/spatial merging: {len(merged_peaks)}")
-
-    # Select top distinct peaks up to upper_bound
     selected = merged_peaks[:upper_bound]
     listofpeaks = np.array([[p[0], p[1], p[2]] for p in selected], dtype=int)
 
@@ -175,6 +260,18 @@ def get_peaklist(projectdir, stack_file, valmin=0.01, valmax=1.0, lower_bound=50
     del Iall, stack
     gc.collect()
     return peakfile, len(listofpeaks)
+
+
+def get_peaklist(projectdir, stack_file, valmin=0.9, valmax=1.0, lower_bound=50, upper_bound=150,
+                 method="increment", use_local_max=False, min_dist_px=9):
+    """Dispatcher for peak finding."""
+    if use_local_max:
+        return get_peaklist_local_max(projectdir, stack_file, lower_bound=lower_bound,
+                                      upper_bound=upper_bound, min_dist_px=min_dist_px)
+    else:
+        return get_peaklist_threshold(projectdir, stack_file, valmin=valmin, valmax=valmax,
+                                      lower_bound=lower_bound, upper_bound=upper_bound,
+                                      method=method)
 
 
 def calcB(a, b, c, alpha, beta, gamma):
@@ -382,6 +479,12 @@ def main():
                         help="Skip optimization and apply fixed Euler angles 'e0,e1,e2'")
     parser.add_argument("--init-euler", type=str, default=None,
                         help="Initial Euler angle guess 'e0,e1,e2' to seed basinhopping optimization")
+    parser.add_argument("--threshold-method", choices=["increment", "bisection"], default="increment",
+                        help="Threshold adjustment method: 'increment' (default legacy linear stepping) or 'bisection' (bifurcation bracket search)")
+    parser.add_argument("--bisection", action="store_true",
+                        help="Use bifurcation (bisection) search when adjusting intensity threshold range")
+    parser.add_argument("--use-local-max", action="store_true",
+                        help="Use 2D local maxima filtering and 3D non-maximum suppression across phi frames")
     parser.add_argument("--min-dist-px", type=int, default=9,
                         help="Minimum pixel distance for local maxima filtering (default: 9px)")
 
@@ -415,9 +518,11 @@ def main():
 
     # Peak finding
     peakfile = os.path.join(projectdir, "peaklist1.npy")
+    thresh_method = "bisection" if args.bisection else args.threshold_method
     if not (args.skip_peaks and os.path.exists(peakfile)):
         get_peaklist(projectdir, stack_file, valmin=args.valmin, valmax=args.valmax,
                      lower_bound=args.lower_bound, upper_bound=args.upper_bound,
+                     method=thresh_method, use_local_max=args.use_local_max,
                      min_dist_px=args.min_dist_px)
 
     # Orient
