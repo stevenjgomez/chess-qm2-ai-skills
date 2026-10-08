@@ -482,7 +482,7 @@ def save_orm(projectdir, UBRfinal, uca, ucb, ucc, ucal, ucbe, ucga):
     ormnex.ormatrix.U = NXfield(UBRfinal, name='Orientation_Matrix')
     ormnex.dspi = NXentry()
     ormnex.dspi.dpsi = NXfield(dpsi, name='detector psi offset')
-    ormnex.save(ormout)
+    ormnex.save(ormout, mode='w')
     print(f"Successfully saved orientation matrix to {ormout}")
 
 
