@@ -234,20 +234,43 @@ def get_peaklist_local_max(projectdir, stack_file, lower_bound=50, upper_bound=1
     if not frame_peaks:
         raise ValueError(f"No peaks found in {stack_path} above noise floor (1000 counts).")
 
-    # Step 2: Merge peaks across adjacent phi frames (within +/- 2 frames and +/- 5 pixels)
+    # Step 2: Merge peaks across adjacent phi frames using spatial grid hashing (O(N))
     frame_peaks.sort(key=lambda x: x[3], reverse=True)
     merged_peaks = []
-    used = set()
-    for i, p in enumerate(frame_peaks):
-        if i in used:
-            continue
-        merged_peaks.append(p)
-        for j in range(i + 1, len(frame_peaks)):
-            if j in used:
+    cell_size = 5
+    occupied = {}
+
+    for p in frame_peaks:
+        px, py, pf, p_int = p
+        cx, cy = px // cell_size, py // cell_size
+        conflict = False
+        for df in range(-2, 3):
+            f_check = pf + df
+            if f_check not in occupied:
                 continue
-            pj = frame_peaks[j]
-            if abs(p[2] - pj[2]) <= 2 and abs(p[0] - pj[0]) <= 5 and abs(p[1] - pj[1]) <= 5:
-                used.add(j)
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    ckey = (f_check, cx + dx, cy + dy)
+                    if ckey in occupied[f_check]:
+                        for other in occupied[f_check][ckey]:
+                            if abs(px - other[0]) <= 5 and abs(py - other[1]) <= 5 and abs(pf - other[2]) <= 2:
+                                conflict = True
+                                break
+                    if conflict:
+                        break
+                if conflict:
+                    break
+            if conflict:
+                break
+
+        if not conflict:
+            merged_peaks.append(p)
+            if pf not in occupied:
+                occupied[pf] = {}
+            cell_key = (pf, cx, cy)
+            if cell_key not in occupied[pf]:
+                occupied[pf][cell_key] = []
+            occupied[pf][cell_key].append(p)
 
     print(f"Distinct 3D reflections after angular/spatial merging: {len(merged_peaks)}")
     selected = merged_peaks[:upper_bound]
