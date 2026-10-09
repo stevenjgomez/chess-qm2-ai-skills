@@ -33,15 +33,31 @@ from nexusformat.nexus import nxload, NXdata, NXfield, nxsetmemory
 from nxs_analysis_tools import plot_slice, reciprocal_lattice_params
 
 
-def apply_grid_and_ticks(ax, quadmesh, x_bounds, y_bounds, major_step=None, grid_color="gray", grid_alpha=0.5):
+def get_nice_integer_step(span, target_num=8):
+    """Pick a clean integer tick interval producing approximately target_num divisions."""
+    candidates = [1, 2, 4, 5, 6, 8, 10, 12, 15, 20, 24, 25, 30, 50, 100]
+    best_step = 1
+    best_diff = float('inf')
+    for c in candidates:
+        n = span / c
+        diff = abs(n - target_num)
+        if diff < best_diff:
+            best_diff = diff
+            best_step = c
+    return best_step
+
+
+def apply_grid_and_ticks(ax, quadmesh, x_bounds, y_bounds, x_major=None, y_major=None, grid_step=None, grid_color="gray", grid_alpha=0.5):
     """
     Apply integer-aligned major/minor ticks and skew-aligned grid lines to a plot_slice() axis.
 
-    Formatting requirements (default for all cases):
-    1. Major ticks: placed strictly on integers (MultipleLocator, default 2 if span > 8 else 1).
-    2. Minor ticks: mandatory on every integer (MultipleLocator(1)).
+    Formatting requirements:
+    1. Major ticks: placed strictly on integers (MultipleLocator), dynamically choosing a step
+       yielding ~6-10 intervals across the axis so labels never overlap.
+    2. Minor ticks: integer-aligned (step 1 for step <= 6, step 2 for step <= 20, else 5).
     3. Grid lines: rendered via LineCollection transformed by quadmesh.get_transform() so that
        lines of constant reciprocal lattice coordinates strictly reflect the crystallographic skew_angle.
+       Grid lines default to spacing matching major ticks (or custom grid_step).
     """
     xmin, xmax = x_bounds
     ymin, ymax = y_bounds
@@ -49,21 +65,32 @@ def apply_grid_and_ticks(ax, quadmesh, x_bounds, y_bounds, major_step=None, grid
     x_span = xmax - xmin
     y_span = ymax - ymin
 
-    x_major = major_step if major_step is not None else (2 if x_span > 8 else 1)
-    y_major = major_step if major_step is not None else (2 if y_span > 8 else 1)
+    if x_major is None:
+        x_major = get_nice_integer_step(x_span, target_num=8)
+    if y_major is None:
+        y_major = get_nice_integer_step(y_span, target_num=8)
 
-    # 1. Ticks: Major on integers, Minor mandatory on every integer
+    # 1. Ticks: Major on integers, Minor integer-aligned
     ax.xaxis.set_major_locator(MultipleLocator(x_major))
-    ax.xaxis.set_minor_locator(MultipleLocator(1))
+    x_minor = 1 if x_major <= 6 else (2 if x_major <= 20 else 5)
+    ax.xaxis.set_minor_locator(MultipleLocator(x_minor))
+
     ax.yaxis.set_major_locator(MultipleLocator(y_major))
-    ax.yaxis.set_minor_locator(MultipleLocator(1))
+    y_minor = 1 if y_major <= 6 else (2 if y_major <= 20 else 5)
+    ax.yaxis.set_minor_locator(MultipleLocator(y_minor))
+
     ax.tick_params(direction='in', top=True, right=True, which='both')
 
     # 2. Skew-aligned grid lines in reciprocal data coordinates
     trans = quadmesh.get_transform()
 
-    h_ints = np.arange(int(np.ceil(xmin)), int(np.floor(xmax)) + 1, 1)
-    k_ints = np.arange(int(np.ceil(ymin)), int(np.floor(ymax)) + 1, 1)
+    hx_step = grid_step if grid_step is not None else x_major
+    ky_step = grid_step if grid_step is not None else y_major
+
+    h_start = int(np.ceil(xmin / hx_step)) * hx_step
+    h_ints = np.arange(h_start, int(np.floor(xmax)) + 1, hx_step)
+    k_start = int(np.ceil(ymin / ky_step)) * ky_step
+    k_ints = np.arange(k_start, int(np.floor(ymax)) + 1, ky_step)
 
     h_lines = [[(h, ymin), (h, ymax)] for h in h_ints]
     k_lines = [[(xmin, k), (xmax, k)] for k in k_ints]
@@ -135,6 +162,8 @@ def main():
     parser.add_argument("--vmin", type=float, default=None, help="Colorbar lower cutoff")
     parser.add_argument("--vmax", type=float, default=None, help="Colorbar upper cutoff")
     parser.add_argument("--cmap", default="turbo", help="Colormap name (default 'turbo')")
+    parser.add_argument("--major-step", type=int, default=None, help="Integer step for major axis ticks (auto-scaled by default)")
+    parser.add_argument("--grid-step", type=int, default=None, help="Integer step for reciprocal grid lines (matches major ticks by default)")
     parser.add_argument("--grid-color", default="gray", help="Grid line color (default 'gray')")
     parser.add_argument("--grid-alpha", type=float, default=0.5, help="Grid line alpha (default 0.5)")
     parser.add_argument("--no-grid", action="store_true", help="Disable grid lines")
@@ -233,7 +262,8 @@ def main():
     # Apply physical reciprocal aspect ratio correction
     ax.set_aspect(ax.get_aspect() * (b_star / a_star))
     if not args.no_grid:
-        apply_grid_and_ticks(ax, p_hk, h_bounds, k_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
+        apply_grid_and_ticks(ax, p_hk, h_bounds, k_bounds, x_major=args.major_step, y_major=args.major_step,
+                             grid_step=args.grid_step, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
     fig.savefig(hk_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {hk_out}")
@@ -257,7 +287,8 @@ def main():
     # Apply physical reciprocal aspect ratio correction
     ax.set_aspect(ax.get_aspect() * (c_star / a_star))
     if not args.no_grid:
-        apply_grid_and_ticks(ax, p_hl, h_bounds, l_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
+        apply_grid_and_ticks(ax, p_hl, h_bounds, l_bounds, x_major=args.major_step, y_major=None,
+                             grid_step=args.grid_step, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
     fig.savefig(hl_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {hl_out}")
@@ -281,7 +312,8 @@ def main():
     # Apply physical reciprocal aspect ratio correction
     ax.set_aspect(ax.get_aspect() * (c_star / b_star))
     if not args.no_grid:
-        apply_grid_and_ticks(ax, p_kl, k_bounds, l_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
+        apply_grid_and_ticks(ax, p_kl, k_bounds, l_bounds, x_major=args.major_step, y_major=None,
+                             grid_step=args.grid_step, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
     fig.savefig(kl_out, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved slice to {kl_out}")
@@ -294,21 +326,24 @@ def main():
                     xlim=h_bounds, ylim=k_bounds, title=f"HK (L={args.l_center:g}, skew={gamma_star:.0f}°)", cmap=args.cmap, cbar=False)
     axes[0].set_aspect(axes[0].get_aspect() * (b_star / a_star))
     if not args.no_grid:
-        apply_grid_and_ticks(axes[0], p0, h_bounds, k_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
+        apply_grid_and_ticks(axes[0], p0, h_bounds, k_bounds, x_major=args.major_step, y_major=args.major_step,
+                             grid_step=args.grid_step, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
 
     p1 = plot_slice(nx_hl, skew_angle=beta_star, ax=axes[1], logscale=True, vmin=c_min, vmax=c_max,
                     xlim=h_bounds, ylim=l_bounds, title=f"HL (K={args.k_center:g}, skew={beta_star:.0f}°)" if beta_star != 90.0 else f"HL (K={args.k_center:g})",
                     cmap=args.cmap, cbar=False)
     axes[1].set_aspect(axes[1].get_aspect() * (c_star / a_star))
     if not args.no_grid:
-        apply_grid_and_ticks(axes[1], p1, h_bounds, l_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
+        apply_grid_and_ticks(axes[1], p1, h_bounds, l_bounds, x_major=args.major_step, y_major=None,
+                             grid_step=args.grid_step, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
 
     im_last = plot_slice(nx_kl, skew_angle=alpha_star, ax=axes[2], logscale=True, vmin=c_min, vmax=c_max,
                          xlim=k_bounds, ylim=l_bounds, title=f"KL (H={args.h_center:g}, skew={alpha_star:.0f}°)" if alpha_star != 90.0 else f"KL (H={args.h_center:g})",
                          cmap=args.cmap, cbar=False)
     axes[2].set_aspect(axes[2].get_aspect() * (c_star / b_star))
     if not args.no_grid:
-        apply_grid_and_ticks(axes[2], im_last, k_bounds, l_bounds, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
+        apply_grid_and_ticks(axes[2], im_last, k_bounds, l_bounds, x_major=args.major_step, y_major=None,
+                             grid_step=args.grid_step, grid_color=args.grid_color, grid_alpha=args.grid_alpha)
 
     summary_fig.subplots_adjust(right=0.88, wspace=0.3)
     cbar_ax = summary_fig.add_axes([0.90, 0.20, 0.015, 0.60])
