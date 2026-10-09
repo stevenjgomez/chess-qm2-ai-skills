@@ -90,12 +90,14 @@ This skill defines the operational standards, path conventions, cluster etiquett
    - Accessing hierarchical NeXus attributes (such as `data = nx_obj.entry.data` or `counts = data.counts`) is purely a lazy tree traversal that maintains `_value = None` without loading array data into RAM.
    - Slicing 3D reciprocal space volumes for cross-sectional visualization or diagnostic cuts must strictly be performed lazily via hyperslab indexing (e.g. `counts[:, :, slice_span]` or `data[:, :, 0.0]`), reading only the targeted 2D hyperslab directly from disk via HDF5 chunking.
    - **Never** call `.nxdata` or `np.asarray` on an unsliced 3D dataset, and never pass an unsliced 3D `NXdata` to `plot_slice(data, sum_axis=...)` (which triggers `raw_data = data.nxsignal.nxdata` internally, causing out-of-memory aborts on cluster nodes).
-9. **Predicted End-Time Job Monitoring & Wakeup Protocol**:
-   - Rather than high-frequency polling or blind recurring cron checks (e.g. every 5 minutes), the agent must dynamically estimate the predicted completion time of the running step based on the observed execution rate (e.g. frames processed per minute during CBF conversion, or iterations per minute during basinhopping).
-   - Compute remaining work:
-     $$\Delta t_{\text{est}} = \frac{N_{\text{total}} - N_{\text{current}}}{\text{rate}} + t_{\text{post}}$$
-     where $t_{\text{post}}$ accounts for file writes and downstream visualization steps.
-   - Set a single-shot timer (`schedule` with `DurationSeconds`) timed to wake up near the predicted completion time. This avoids excessive cluster queries, unneeded wakeups, and unnecessary log reads while keeping the user informed of the exact estimated completion time.
+9. **Predicted Finish-Time Job Monitoring & Wakeup Protocol**:
+   - **Prohibition on Fixed/Arbitrary Interval Timers**: Never schedule check timers using arbitrary, fixed intervals (such as blind 15-minute or 30-minute intervals). Arbitrary intervals wake the agent up prematurely or mid-computation without providing meaningful completion milestones.
+   - **Dynamic Rate Estimation**: The agent must dynamically calculate the predicted finish time based on the measured execution rate of the running step:
+     - *CBF Stacking*: Compute rate from loaded frames: $\text{rate} = \Delta N / \Delta t \approx 2\text{--}3\text{ frames/s}$. Estimate remaining time:
+       $$\Delta t_{\text{est}} = \frac{N_{\text{frames, remaining}}}{\text{rate}} + t_{\text{write}}$$
+     - *Reciprocal Space Conversion (`1rot` / `3rot`)*: Measure the exact duration of the first rotation from log timestamps ($T_{\text{rot1}}$, e.g. $\sim 2260\text{ s} \approx 38\text{ min}$ for 3651 frames). Calculate remaining time for the remaining rotations ($N_{\text{rot, remaining}}$) plus downstream visualization:
+       $$\Delta t_{\text{est}} = (N_{\text{rot, remaining}} - 1) \times T_{\text{rot1}} + \frac{N_{\text{frames, rot\_curr, remaining}}}{\text{rate}} + t_{\text{slice\_vis}}$$
+   - **Targeted One-Shot Schedule**: Set a single-shot timer (`schedule` with `DurationSeconds = int(delta_t_est)`) timed specifically for the predicted finish time. This ensures wakeups occur precisely when the step or entire reduction finishes, eliminating redundant wakeups and unnecessary cluster polling.
 
 ---
 
@@ -212,7 +214,7 @@ Upon user approval of the orientation matrix / instruction to generate full reco
    ```bash
    qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 scripts/legacy-reduction-{sample_id}-batch.sh
    ```
-5. Monitor progress in real-time via `tail -f <log_path>` or rate-informed one-shot timer.
+5. **Targeted Monitoring**: Schedule a one-shot wakeup timer strictly based on the calculated predicted finish time ($\Delta t_{\text{est}}$) rather than arbitrary intervals (see Section 1.9). Avoid premature wakeups.
 
 ---
 
