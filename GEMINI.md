@@ -87,3 +87,13 @@ Legacy reduction scripts (`stack_em_all.py`, `Pil6M_HKLConv_3D_2022_1rot.py`, `3
 `$HOME/chess_legacy_codebase/` (overridable with `$CHESS_LEGACY_CODEBASE` or `--codebase`).
 
 Run-cycle paths (such as `/nfs/chess/id4baux/2026-2/...`) get archived periodically and must **never** be hardcoded into tools or submission scripts.
+
+---
+
+## 8. Relative Filepaths for Markdown Artifacts & Reports
+
+When generating or exporting user-facing Markdown reports and summaries:
+- **Mandatory Relative Paths**: All embedded assets (figures, plots, slices, links) must strictly use relative paths (e.g. `![Caption](./slices_summary.png)`).
+- **Prohibition on Absolute Paths**: Never use absolute local paths (e.g. `/Users/...` or `/nfs/chess/...`) or paths pointing into hidden agent internal brain directories (`~/.gemini/antigravity-cli/brain/...`) inside Markdown documents destined for user workspaces.
+- **Rationale**: Prevents webview Content Security Policy (CSP) / sandbox blocking in VS Code and Markdown previewers, avoids web-root resolution errors, and ensures documents remain portable and reproducible when synced via OneDrive or Git.
+
