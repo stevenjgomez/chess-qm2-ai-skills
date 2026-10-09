@@ -14,7 +14,44 @@ import sys
 
 
 def parse_bravais_log(log_path):
-    """Parse the Bravais settings table from dials.refine_bravais_settings.log."""
+    """Parse the Bravais settings table from bravais_summary.json or log file."""
+    # Check if a sibling bravais_summary.json exists
+    json_path = os.path.join(os.path.dirname(log_path) or ".", "bravais_summary.json")
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r") as f:
+                data = json.load(f)
+            solutions = []
+            for sol_key, v in data.items():
+                sol_id = int(sol_key)
+                uc = v["unit_cell"]
+                # Calculate volume
+                a, b, c, al, be, ga = uc
+                import math
+                al_r, be_r, ga_r = math.radians(al), math.radians(be), math.radians(ga)
+                vol = a * b * c * math.sqrt(
+                    1 - math.cos(al_r)**2 - math.cos(be_r)**2 - math.cos(ga_r)**2 +
+                    2 * math.cos(al_r) * math.cos(be_r) * math.cos(ga_r)
+                )
+                cc_str = f"{v.get('min_cc', 0.0):.3f}/{v.get('max_cc', 0.0):.3f}" if v.get('min_cc') is not None else "-/-"
+                solutions.append({
+                    "solution": sol_id,
+                    "recommended": v.get("recommended", False),
+                    "metric_fit": v.get("max_angular_difference", 0.0),
+                    "rmsd": v.get("rmsd", 0.0),
+                    "cc": cc_str,
+                    "spots": v.get("nspots", 0),
+                    "lattice": v.get("bravais", ""),
+                    "cell": uc,
+                    "volume": vol,
+                    "cb_op": v.get("cb_op", "a,b,c"),
+                    "file": f"bravais_setting_{sol_id}.expt"
+                })
+            solutions.sort(key=lambda s: s["solution"], reverse=True)
+            return solutions
+        except Exception:
+            pass
+
     if not os.path.exists(log_path):
         raise FileNotFoundError(f"Log file not found: {log_path}")
 
@@ -22,17 +59,14 @@ def parse_bravais_log(log_path):
         content = f.read()
 
     solutions = []
-    # Match the tabular lines:
-    # Example line:
-    # *    12   0.0507 0.089 0.812/0.892  2400     hR      4.76  4.76 12.99  90.00  90.00 120.00    255 -c,a,-b+c
-    #      11   0.0620 0.095 0.750/0.810  2380     oC      ...
-    table_pattern = re.compile(
-        r"^\s*([*]?)\s*(\d+)\s+([\d\.]+)\s+([\d\.]+)\s+([-\d\./]+)\s+(\d+)\s+([a-zA-Z]+)\s+"
-        r"([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+(\S+)",
-        re.MULTILINE
+    # Match pipe-separated or whitespace-separated lines
+    # E.g.: |   *     12 |            0 | 17.809 | 0.288/0.356   |      133 | hP        | 5.22   5.22  13.27  90.00  90.00 120.00 |      314 | a,b,c      |
+    pipe_pattern = re.compile(
+        r"\|\s*([*]?)\s*(\d+)\s*\|\s*([\d\.]+)\s*\|\s*([\d\.]+)\s*\|\s*([-\d\./]+|-/-)\s*\|\s*(\d+)\s*\|\s*([a-zA-Z]+)\s*\|\s*"
+        r"([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s+([\d\.]+)\s*\|\s*([\d\.]+)\s*\|\s*(\S+)\s*\|"
     )
 
-    for match in table_pattern.finditer(content):
+    for match in pipe_pattern.finditer(content):
         recommended = match.group(1) == "*"
         sol_id = int(match.group(2))
         metric_fit = float(match.group(3))
