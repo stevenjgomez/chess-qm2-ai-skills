@@ -44,7 +44,9 @@ def convert_edf_to_dials_mask(edf_file, output_mask, existing_dials_mask=None):
         tmp_npy = tempfile.mktemp(suffix=".npy")
         jpcr_py = "/nfs/chess/sw/anaconda3_jpcr/bin/python"
         cmd = f'{jpcr_py} -c "import fabio, numpy as np; np.save(\'{tmp_npy}\', fabio.open(\'{edf_file}\').data)"'
-        res = subprocess.call(cmd, shell=True)
+        sub_env = os.environ.copy()
+        sub_env.pop("PYTHONPATH", None)
+        res = subprocess.call(cmd, shell=True, env=sub_env)
         if res == 0 and os.path.exists(tmp_npy):
             data = np.load(tmp_npy)
             os.remove(tmp_npy)
