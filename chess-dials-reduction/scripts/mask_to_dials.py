@@ -23,12 +23,6 @@ def convert_edf_to_dials_mask(edf_file, output_mask, existing_dials_mask=None):
     If an existing DIALS mask is provided, perform a logical AND (both must be trusted).
     """
     try:
-        import fabio
-    except ImportError:
-        print("Error: fabio is required to read EDF files. Please install fabio or run in dials.python.", file=sys.stderr)
-        sys.exit(1)
-
-    try:
         from scitbx.array_family import flex
         import numpy as np
     except ImportError:
@@ -39,8 +33,23 @@ def convert_edf_to_dials_mask(edf_file, output_mask, existing_dials_mask=None):
         raise FileNotFoundError(f"EDF mask not found: {edf_file}")
 
     print(f"Reading EDF mask: {edf_file}")
-    img = fabio.open(edf_file)
-    data = img.data  # shape typically (2527, 2463) for Pilatus 6M
+    data = None
+    try:
+        import fabio
+        img = fabio.open(edf_file)
+        data = img.data
+    except ImportError:
+        # Fallback to anaconda3_jpcr which has fabio preinstalled
+        import subprocess, tempfile
+        tmp_npy = tempfile.mktemp(suffix=".npy")
+        jpcr_py = "/nfs/chess/sw/anaconda3_jpcr/bin/python"
+        cmd = f'{jpcr_py} -c "import fabio, numpy as np; np.save(\'{tmp_npy}\', fabio.open(\'{edf_file}\').data)"'
+        res = subprocess.call(cmd, shell=True)
+        if res == 0 and os.path.exists(tmp_npy):
+            data = np.load(tmp_npy)
+            os.remove(tmp_npy)
+        else:
+            raise RuntimeError(f"Failed to read EDF mask {edf_file} using fabio.")
 
     # EDF convention: 0 = valid / trusted, >0 = masked / untrusted
     trusted_np = (data == 0)
