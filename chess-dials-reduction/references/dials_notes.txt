@@ -1,0 +1,15 @@
+Needed to use mask at find spots step, and pass phil file.
+ source /nfs/chess/sw/dials_sgomezalvarado/dials_env.sh
+ dials.import ~/CLASSE/yi-4791-a/raw6M/FeTe2_str2/FeTe2-6C/16/FeTe2_str2_012/FeTe2_str2_PIL10_012_*.cbf geometry.goniometer.axes=0,-1,0 
+ export XKB_CONFIG_ROOT=/usr/share/X11/xkb # This is for GUI
+ dials.image_viewer imported.expt mask=pixels.mask 
+ dials.find_spots find_spots.phil imported.expt spotfinder.filter.d_min=0.75
+ dials.index imported.expt strong.refl 
+ dials.refine_bravais_settings indexed.expt indexed.refl
+ dials.reindex indexed.refl change_of_basis_op=-c,a,-b+c
+ dials.refine bravais_setting_12.expt reindexed.refl 
+ dials.integrate refined.expt refined.refl nproc=8 
+ dials.symmetry integrated.expt integrated.refl    
+ dials.scale symmetrized.expt symmetrized.refl overwrite_existing_models=True absorption_level=high anomalous=True  
+ dials.merge scaled.expt scaled.refl output.html=None  [optional!]
+ dials.export scaled.expt scaled.refl format=shelx composition=FeTe2 shelx.scale=False

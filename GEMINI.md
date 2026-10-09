@@ -22,6 +22,7 @@ Beamline pipelines strictly segregate processing stages across dedicated environ
 | Architectural Constant | Remote Interpreter Path | Dedicated Pipeline Stage |
 | :--- | :--- | :--- |
 | **`PYTHON_EXEC`** | `/nfs/chess/sw/anaconda3_jpcr/bin/python` | **Legacy Reduction**: Raw Pilatus CBF frame stacking (`stack_em_all.py`), headless orientation matrix solving (`orm_solver.py`), and 1rot/3rot reciprocal space conversions (strictly frozen; required for `libhkl.so`). |
+| **`DIALS_ENV`** | `source /nfs/chess/sw/dials_sgomezalvarado/dials_env.sh`<br>(Python: `dials.python`) | **DIALS Reduction & Refinement Prep**: Pilatus 6M single-crystal data reduction (`dials.import`, `dials.find_spots`, `dials.index`, `dials.integrate`, `dials.scale`) and dual export for Jana2020 / Olex2. |
 | **`NIGHTLY_PYTHON`**<br>(or **`VIS_PYTHON`**) | `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python` | **Downstream Analysis & Preparation**: Diagnostic reciprocal slicing (`slice_visualizer.py`), `nxs_analysis_tools.plot_slice()`, linecuts (`Scissors`), and 4D dataset compilation (`generate_xtec_input.py`). |
 | **`GPU_PYTHON`**<br>(or **`XTEC_BIN`**) | `/nfs/chess/sw/qm2_XTEC312/bin/python`<br>(CLI: `/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu`) | **GPU Machine Learning**: Unsupervised clustering (XTEC-GPU), PyTorch, `torchgmm`, and BIC model sweeps on `lnx4428`. |
 
