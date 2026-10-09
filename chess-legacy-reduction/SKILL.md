@@ -139,6 +139,7 @@ Standard path patterns at CHESS ID4B:
   ```
 
 ### 3.3 Rotation Scan Count Verification (1 vs. 3 vs. >3)
+- **Terminology & Meaning**: When asking or answering "how many rotations" or "are there three rotations", this refers simply and directly to the number of scan folders present in the temperature directory (e.g. `K2Co2TeO6_002`, `_003`, `_004` = 3 rotations/scans). Do not overthink or overcomplicate this with motor goniometer angles; simply count and report the scan directories present in the raw data folder.
 - **Standard Counts**: Data reduction pipelines expect either:
   - **1 rotation scan** (e.g. `FeTe2-5A`): Reconstructed using `Pil6M_HKLConv_3D_2022_1rot.py` $\rightarrow$ `1rot_hkli.nxs`.
   - **3 rotation scans** (e.g. `FeGe-ST-2A`): Stacks 3 scans (`stack1.nxs`, `stack2.nxs`, `stack3.nxs`) and converts using `Pil6M_HKLConv_3D_2022_3rot.py` $\rightarrow$ `3rot_hkli.nxs`.
