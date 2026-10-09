@@ -193,18 +193,26 @@ Standard path patterns at CHESS ID4B:
    python scripts/pipeline_tracker.py /nfs/chess/id4baux/{cycle}/{experiment}/processed_old_way/{sample}/{sample_id} --verify-orm
    ```
 
-### Phase 2: Full Distributed Batch Reduction
-Upon user approval of the orientation matrix:
-1. Submit batch reduction job script via `qsub`:
+### Phase 2: Full Distributed Batch Reduction (3rot_hkli Generation)
+Upon user approval of the orientation matrix / instruction to generate full reconstructions:
+1. **Immediate Priority on Compute Stacks (No Plotting Sidetracks)**:
+   - Generating `3rot_hkli.nxs` requires exactly 3 stacks (`stack1.nxs`, `stack2.nxs`, `stack3.nxs`).
+   - If 3 rotation scans are available in the raw directory, the agent **must immediately identify missing stacks** (`stack2.nxs`, `stack3.nxs`) and prepare the batch execution script to stack them via `stack_em_all.py` followed by `Pil6M_HKLConv_3D_2022_3rot.py`.
+   - **Prohibition on Pre-emptive Tool Tweaking**: Never pause, investigate, or modify downstream plotting scripts (such as `slice_visualizer.py`) before heavy stacking and conversion jobs are submitted. Data reduction compute takes hours and must be dispatched first.
+2. **Scan Count Logic**:
+   - If **3 rotation scans** exist in the raw directory: Generate `3rot_hkli.nxs` (stacking missing scans 2 and 3 first).
+   - If only **1 rotation scan** exists: Generate only `1rot_hkli.nxs`.
+3. **Execution Script Pattern**:
+   Prepare and present the SGE batch script via the Show-Before-Submit gate:
+   - Step 0A: `stack_em_all.py` on scan 2 $\rightarrow$ `stack2.nxs`
+   - Step 0B: `stack_em_all.py` on scan 3 $\rightarrow$ `stack3.nxs`
+   - Step 1: `Pil6M_HKLConv_3D_2022_3rot.py` with verified unit cell / supercell bounds $\rightarrow$ `3rot_hkli.nxs`
+   - Step 2: `slice_visualizer.py` on `3rot_hkli.nxs`
+4. Submit batch reduction job script via `qsub`:
    ```bash
    qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 scripts/legacy-reduction-{sample_id}-batch.sh
    ```
-2. The batch script runs `orchestrate_reduction.py --mode batch --ref-temp <ref_T>`, which:
-   - Stacks rotations 2 and 3 for the reference temperature (`stack2.nxs`, `stack3.nxs`).
-   - Stacks all rotations for all remaining temperatures.
-   - Executes `Pil6M_HKLConv_3D_2022_3rot.py` across all temperatures applying the verified orientation matrix.
-   - Generates final diagnostic summary slice figures and updates `pipeline_status.json`.
-3. Monitor progress in real-time via `tail -f <log_path>`.
+5. Monitor progress in real-time via `tail -f <log_path>` or rate-informed one-shot timer.
 
 ---
 
