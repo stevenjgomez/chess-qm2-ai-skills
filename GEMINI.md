@@ -70,3 +70,24 @@ The login node is strictly restricted to:
    qrsh -q interactive.q -l mem_free=64G -pe sge_pe 8
    ```
    Execute the interactive workflow **only after the interactive shell session opens on the allocated worker node** (`lnx307`, `lnx308`, etc.). Never execute directly in the initial `lnx201` shell.
+
+---
+
+## 4. Shell & Remote Execution Etiquette: Absolute Prohibition on Inline Here-Docs (`cat << 'EOF'`)
+
+- **Prohibition on Shell Here-Docs (`cat << 'EOF'`, `<< EOF`) in Command Line Calls**:
+  Never construct or inject scripts, configurations, or multi-line files using inline shell here-docs (`cat << 'EOF' > ...`) inside `run_command` or SSH invocations.
+- **Rationale**:
+  1. **Shell Quoting and Parsing Breakage**: In shells like `zsh` and `bash`, especially when wrapped in nested command strings or SSH calls (`ssh host "cat << 'EOF' ..."`), the outer shell parses quotes, backticks, expansions, and escaped characters before transmitting the command. A single unescaped or mismatched quote immediately causes shell syntax errors such as `zsh: unmatched "` and breaks command execution.
+  2. **Multi-Layer Transport Corruption**: When transmitting complex scripts across local-to-remote boundaries, nested single- and double-quote boundaries frequently collide, resulting in silent script truncation, corrupted bash logic, or unintended parameter expansions.
+  3. **Reproducibility & Traceability**: Inline here-docs leave no local artifact, are difficult to inspect, cannot be diffed cleanly, and make debugging tedious.
+- **Mandatory Procedure for File Creation & Remote Transfer**:
+  1. **Local Authoring via Dedicated File Tools**: Always author scripts, configurations, and job wrappers locally or in the scratch directory (`<appDataDir>/scratch/` or workspace `scripts/`) using dedicated file authoring tools (`write_to_file`).
+  2. **Clean File Transfer via `scp`**: When the file is needed on a remote server/cluster, transfer the cleanly authored file via `scp`:
+     ```bash
+     scp /path/to/local/script.sh lnx201:/path/to/remote/destination.sh
+     ```
+  3. **Direct Execution / Dispatch**: Set permissions and execute or submit the remote file cleanly:
+     ```bash
+     ssh lnx201 "chmod +x /path/to/remote/destination.sh && qsub /path/to/remote/destination.sh"
+     ```
