@@ -13,22 +13,33 @@ The output of this pipeline is a dual reflection bundle (`for_refinement/`) cont
 
 ---
 
-## 1. Environment & Beamline Prerequisites
+## 1. Environment & Remote Compute Etiquette
 
-### 1.1 Software & Environment
-On CLASSE cluster nodes (`lnx201`, `lnx307`, `lnx311`, `lnx312`, `lnx313`), DIALS is installed and activated via:
+### 1.1 Cluster Etiquette: ZERO Compute on Login Node (`lnx201`)
+> [!CAUTION]
+> **STRICT PROHIBITION ON DATA PROCESSING ON `lnx201` (LOGIN NODE)**
+>
+> `lnx201` is a shared interactive login gateway for all CLASSE/CHESS beamline users. **NO data processing, spot finding (`dials.find_spots`), indexing (`dials.index`), mask conversions, refinement, or integration may be run directly on `lnx201`.**
+> 
+> - **Permitted on `lnx201`**: Filesystem navigation, reading/editing scripts, checking logs (`tail -f`), monitoring queues (`qstat`), and submitting jobs (`qsub`).
+> - **Mandatory Compute Pattern**:
+>   - **Batch Execution (`qsub`)**: BOTH Stage 1 (pilot import, spotfinding, indexing, Bravais settings) and Stage 2 (reindexing, refinement, integration, scaling, export) **MUST be submitted as SGE batch jobs** to compute nodes (`all.q@lnx307*`, `lnx311*`, `lnx312*`, `lnx313*`).
+>   - **Interactive Compute (`qrsh`)**: If interactive debugging or inspection is strictly required, the user or agent must request an interactive allocation via `qrsh -q interactive.q -l mem_free=64G -pe sge_pe 8` and execute commands **only after the shell transitions to the allocated compute worker node**.
+
+### 1.2 Software & Environment
+On CLASSE cluster compute nodes (`lnx307`, `lnx311`, `lnx312`, `lnx313`), DIALS is activated via:
 ```bash
 source /nfs/chess/sw/dials_sgomezalvarado/dials_env.sh
 ```
-* Python tools must be executed via `dials.python` when interacting with DIALS internal C++ data structures (`scitbx.array_family.flex`, `dxtbx`).
+* Python tools interacting with DIALS internal C++ data structures (`scitbx.array_family.flex`, `dxtbx`) must be executed via `dials.python`.
 
-### 1.2 Laboratory Frame & Goniometer Geometry
+### 1.3 Laboratory Frame & Goniometer Geometry
 At CHESS ID4B/QM2 with the Pilatus 6M detector in transmission geometry, the rotation axis in the laboratory coordinate system must be explicitly passed during import:
 ```text
 geometry.goniometer.axes=0,-1,0
 ```
 
-### 1.3 Critical Detector Calibration & Panel Origin
+### 1.4 Critical Detector Calibration & Panel Origin
 > [!IMPORTANT]
 > **Raw Pilatus 6M CBF Headers Contain Stale Beam Center Values!**
 > - The mini-CBF header written by the detector computer frequently records a default uncalibrated beam centre: $(334.54, 433.44)\text{ mm}$ ($(1945, 2520)\text{ px}$).
@@ -43,10 +54,6 @@ geometry.goniometer.axes=0,-1,0
 >   geometry.detector.panel.origin="-208.324,205.764,-499.430"
 >   ```
 > - **Impact of Omission**: If this calibrated origin is omitted, DIALS attempts to fit spot centroids against predictions offset by $126\text{ mm}$. Mosaicity artificially inflates to $>2.5^\circ$, shoeboxes expand to $1583 \times 1646\text{ px} \times 295\text{ frames}$, and `dials.integrate` crashes with a catastrophic **`MemoryError` (180 GB shoebox memory)**.
-
-### 1.4 Cluster Queue & Resource Etiquette
-- **Login Node (`lnx201`)**: Used exclusively for lightweight inspection, Stage 1 spot finding, and indexing. Never run heavy parallel integration on `lnx201`.
-- **Compute Queues (`all.q@lnx307*`, `lnx311*`, `lnx312*`, `lnx313*`)**: All multi-core integration jobs (`dials.integrate nproc=24` or `32`) must be submitted through Sun Grid Engine (`qsub`).
 
 ---
 
@@ -76,24 +83,24 @@ The DIALS reduction pipeline strictly mirrors the beamline's parallel directory 
 
 ---
 
-## 3. Two-Stage Pipeline Architecture
+## 3. Two-Stage Pipeline Architecture (100% SGE Batch Compute)
 
 ```mermaid
 flowchart TD
-    subgraph Stage1["Stage 1: Interactive Verification (lnx201)"]
+    subgraph Stage1["Stage 1: Batch Pilot Reduction (qsub on lnx307/lnx311/lnx312/lnx313)"]
         A["Raw CBF Sweeps (*_002, *_003, *_004)"] --> B["dials.import (axes=0,-1,0 + calibrated origin)"]
         B --> C["dials.generate_mask (pixels.mask)"]
         C --> D["dials.find_spots (mp.nproc=24/32, threshold=5000, d_min=0.75)"]
         D --> E["dials.index (Unconstrained Auto-Indexing)"]
         E --> F["dials.refine_bravais_settings"]
-        F --> G["bravais_matcher.py (Metric & Supercell Scoring)"]
+        F --> G["bravais_matcher.py (outputs ranked Bravais table)"]
     end
 
-    subgraph Gate["Human-in-the-Loop Checkpoint"]
-        G --> H{"Verify Bravais Lattice, Setting & cb_op"}
+    subgraph Gate["Human-in-the-Loop Checkpoint (lnx201 Inspection)"]
+        G --> H{"Inspect dials_stage1.log: Confirm Setting & cb_op"}
     end
 
-    subgraph Stage2["Stage 2: Distributed Batch Reduction (qsub on lnx311/lnx312/lnx313)"]
+    subgraph Stage2["Stage 2: Distributed Batch Integration (qsub on lnx311/lnx312/lnx313)"]
         H -->|Approved| I["dials.reindex (change_of_basis_op, e.g. b,c,a)"]
         I --> J["dials.refine (scan_varying=False, fix=cell)"]
         J --> K["dials.integrate (24/32 parallel CPU cores)"]
@@ -108,28 +115,23 @@ flowchart TD
 
 ## 4. Execution Workflow
 
-### 4.1 Stage 1: Import, Mask, Spotfinding, Indexing, and Bravais Evaluation
+### 4.1 Stage 1: Batch Pilot Import, Spotfinding, Indexing, and Bravais Evaluation
 
-Execute interactively on `lnx201` using `orchestrate_dials.py stage1`:
+Submit Stage 1 as an SGE batch job from `lnx201` targeting compute nodes:
 
 ```bash
-source /nfs/chess/sw/dials_sgomezalvarado/dials_env.sh
-
-python3 scripts/orchestrate_dials.py stage1 \
-    --work-dir /nfs/chess/id4baux/{cycle}/{experiment}/dials/{sample}/{sample_id}/{temp} \
-    --raw-dir /nfs/chess/id4b/{cycle}/{experiment}/raw6M/{sample}/{sample_id}/{temp}/scan_002 \
-    --poni-file /nfs/chess/id4baux/{cycle}/{experiment}/calibrations/ceO2_15keV_trans.poni \
-    --goniometer-axes 0,-1,0 \
-    --edf-mask /nfs/chess/id4baux/{cycle}/{experiment}/calibrations/mask_trans.edf \
-    --gain 1.0 \
-    --global-threshold 5000 \
-    --d-min 0.75 \
-    --nproc 24 \
-    --unit-cell "a b c alpha beta gamma" \
-    --space-group "<SpaceGroup>"
+qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
+     -l mem_free=64G -pe sge_pe 24 \
+     example_job_scripts/dials-stage1-template.sh \
+     "/nfs/chess/id4baux/{cycle}/{experiment}/dials/{sample}/{sample_id}/{temp}" \
+     "/nfs/chess/id4b/{cycle}/{experiment}/raw6M/{sample}/{sample_id}/{temp}/scan_002" \
+     "/nfs/chess/id4baux/{cycle}/{experiment}/calibrations/ceO2_15keV_trans.poni" \
+     "/nfs/chess/id4baux/{cycle}/{experiment}/calibrations/mask_trans.edf" \
+     "a,b,c,alpha,beta,gamma" \
+     "<SpaceGroup>"
 ```
 
-#### Under the Hood:
+#### Under the Hood on the Allocated Compute Node:
 1. **Calibrated Import**:
    Imports raw frames while overriding the stale detector origin with the true beam center from the PONI file:
    ```bash
@@ -143,7 +145,7 @@ python3 scripts/orchestrate_dials.py stage1 \
    dials.generate_mask imported.expt output.mask=pixels.mask
    ```
 3. **Multi-Threaded Spot Finding**:
-   Finds diffraction peak centroids using beamline-calibrated thresholding across parallel cores:
+   Finds diffraction peak centroids using beamline-calibrated thresholding across 24 parallel cores:
    ```bash
    dials.find_spots find_spots.phil imported.expt mask=pixels.mask spotfinder.filter.d_min=0.75 mp.nproc=24
    ```
@@ -156,16 +158,16 @@ python3 scripts/orchestrate_dials.py stage1 \
    ```
    Unconstrained indexing with calibrated geometry yields sub-pixel RMSDs ($<1.3\text{ px}$) and indexes $>65\%$ of reflections.
 5. **Bravais Setting Scoring**:
-   Executes `dials.refine_bravais_settings indexed.expt indexed.refl`, then runs `bravais_matcher.py` to rank settings against target crystallographic parameters.
+   Executes `dials.refine_bravais_settings indexed.expt indexed.refl`, then runs `bravais_matcher.py` to rank candidate Bravais settings.
 
 ---
 
 ### 4.2 Human-in-the-Loop Checkpoint: Bravais Selection Gate
-Before proceeding to Stage 2, present the evaluated Bravais table to the user:
+Inspect `dials_stage1.log` from `lnx201` and present the evaluated Bravais table to the user:
 ```text
 Sol  Fit      RMSD   CC           Lattice  Unit Cell                                  cb_op           Score 
 ---------------------------------------------------------------------------------------------------------------
- 12  0.2327   0.378  0.033/0.125  hP       62.53  62.53  12.61  90.0  90.0 120.0       b,c,a           0.012 
+ 12  0.2327   0.378  0.033/0.125  hP       62.53  62.53  12.61  90.0  90.0 120.0       b,c,a           0.055 
  11  0.2327   0.373  0.116/0.899  oC       62.51 108.33  12.61  90.0  90.0  90.0       b,b+2*c,a       ...
 ```
 * **Required Confirmation**:
@@ -175,19 +177,19 @@ Sol  Fit      RMSD   CC           Lattice  Unit Cell                            
 ---
 
 ### 4.3 Stage 2: Batch Integration, Scaling, and Dual Export
-Submit the heavy compute integration and scaling job to Sun Grid Engine (`qsub`):
+Submit the Stage 2 batch job to Sun Grid Engine (`qsub`):
 
 ```bash
 qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
      -l mem_free=120G -pe sge_pe 24 \
-     example_job_scripts/dials-batch-template.sh \
+     example_job_scripts/dials-stage2-template.sh \
      "/nfs/chess/id4baux/{cycle}/{experiment}/dials/{sample}/{sample_id}/{temp}" \
      "12" \
      "b,c,a" \
      "K2Co2TeO6"
 ```
 
-#### Under the Hood:
+#### Under the Hood on the Allocated Compute Node:
 1. **Reindexing to Standard Setting**:
    ```bash
    dials.reindex indexed.refl change_of_basis_op=b,c,a output.reflections=reindexed.refl
@@ -242,10 +244,10 @@ qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
 
 | Issue / Failure | Root Cause | Solution |
 | :--- | :--- | :--- |
+| **Running data processing on `lnx201`** | Attempting interactive execution on login node violates cluster etiquette and beamline policy. | **Strictly prohibited**. All processing (Stage 1 and Stage 2) must be submitted via SGE batch (`qsub`) or executed inside an allocated `qrsh` worker session. |
 | **`MemoryError` during `dials.integrate`** (180 GB memory for shoeboxes) | Uncalibrated beam center in CBF headers ($126\text{ mm}$ offset) or drifting unit cell inflating mosaicity $\sigma_m > 2.5^\circ$. | 1. Pass `geometry.detector.panel.origin` from pyFAI PONI.<br>2. Run `dials.refine` with `scan_varying=False` and `fix=cell`. |
 | **`No suitable lattice could be found` during `dials.index`** | Passing `indexing.known_symmetry.unit_cell` when crystal possesses supercell reflections ($62.5\text{ \AA}$ vs $5.22\text{ \AA}$) or non-standard orientation. | Run unconstrained auto-indexing first (`dials.index imported.expt strong.refl`). Let DIALS find the true lattice naturally. |
 | **Refinement fails or yields huge RMSD after Bravais selection** | Candidate Bravais setting required an axis permutation (`cb_op != a,b,c`), but reflections were not reindexed. | Run `dials.reindex indexed.refl change_of_basis_op=<cb_op>` before running `dials.refine`. |
-| **Spot finding hangs or times out on `lnx201`** | Single-core execution on 3650 images takes $>20\text{ min}$ over interactive SSH. | Always pass `mp.nproc=24` or run spot finding within an SGE batch job. |
 
 ---
 

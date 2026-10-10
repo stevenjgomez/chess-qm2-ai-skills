@@ -1,100 +1,72 @@
-# Global Assistant Rules & Cluster Etiquette (`GEMINI.md`)
+# Global Assistant Rules (`GEMINI.md`)
 
-This file defines the mandatory operational constraints, cluster etiquette, and execution rules that apply to all AI assistants and autonomous agents operating within the `chess-qm2-ai-skills` workspace and on the Cornell High Energy Synchrotron Source (CHESS) CLASSE compute cluster.
+This file defines global guidelines and constraints that apply across all projects and workspaces.
 
 ---
 
-## 1. Strict Remote Environment Immutability
+## 1. Markdown Reports & Artifact Asset References
+
+When generating, exporting, or copying Markdown reports, summaries, or artifacts for the user in their workspace:
+- **Mandatory Relative Filepaths**: All embedded assets (such as images, plots, diagrams, or linked artifacts) **MUST use relative filepaths** (e.g. `![Caption](./slices_summary.png)` or `![Figure](figures/plot.png)`).
+- **Prohibition on Absolute Paths**: Never use absolute filesystem paths (e.g. `/Users/...` or `/home/...`) or paths pointing into hidden agent internal directories (e.g. `~/.gemini/antigravity-cli/brain/...`) inside user-facing Markdown documents.
+- **Rationale**:
+  1. **Workspace Sandboxing / Security**: Modern Markdown previewers (including VS Code Markdown Preview, Cursor, and webviews) enforce strict Content Security Policies (`localResourceRoots`) that explicitly block loading local resources located outside the active workspace directory.
+  2. **URL / Domain Root Resolution**: In web-based or HTML-based markdown renderers, paths beginning with `/` are interpreted as relative to the web server root rather than the local filesystem root, causing broken 404 links.
+  3. **Portability & Collaboration**: Relative asset paths ensure that Markdown reports remain self-contained, reproducible, and fully functional when synced across machines, viewed in OneDrive, or committed to version control.
+
+---
+
+## 2. Python Execution Etiquette: Always Save to `.py` Files
+
+- **Prohibition on Complex Inline `python -c "..."` Commands**: Never run complex, multi-line, or string-heavy Python scripts as inline command-line arguments (e.g. `python3 -c "..."`).
+- **Rationale**:
+  1. **Shell Expansion & Escaping Pitfalls**: In shells like `zsh` and `bash`, characters such as `$`, `\`, `(`, `)`, `{`, `}`, `"`, and `'` are parsed before reaching Python. Specifically, LaTeX strings (e.g., `$(\frac{1}{2}, 0, 1)$`) trigger zsh command substitution `$()`, resulting in immediate syntax errors like `zsh: command not found`.
+  2. **Quoting Hell**: Nesting single and double quotes inside inline shell strings frequently breaks code strings and leads to silent syntax truncation.
+  3. **Reproducibility & Debuggability**: Standalone `.py` files provide precise traceback line numbers, are easily versioned, and can be inspected and re-run directly by the user.
+- **Mandatory Procedure**:
+  - Always write the code to a proper `.py` script (e.g. in `scripts/`, or in `scratch/test_*.py` for scratch/testing scripts) using file writing tools (`write_to_file`).
+  - Execute the script cleanly via `python3 path/to/script.py [args]`.
+
+---
+
+## 3. Remote Compute Cluster Etiquette: ZERO Data Processing on Login Nodes (`lnx201`)
 
 > [!CAUTION]
-> **Mandatory Read-Only Policy**: All remote Python and Conda environments on CLASSE (located under `/nfs/chess/sw/`) are **strictly read-only / immutable**.
-> 
-> 1. **No Package Modifications**: Assistants and automated tools must **NEVER** run `pip install`, `pip uninstall`, `conda install`, `conda update`, or alter packages, binaries, or shebang lines in any cluster environment (`anaconda3_jpcr`, `anaconda3_sgomezalvarado`, `anaconda3_sgomezalvarado_nightly`, `qm2_XTEC312`, etc.).
-> 2. **Halt and Report on Missing Dependencies**: If an environment lacks a required package or raises an `ImportError` or `AttributeError`, the assistant must **halt execution immediately and report the discrepancy to the user** for resolution. Never attempt to install or upgrade packages into cluster environments.
-> 3. **No Unauthorized Redirection**: Assistants must never substitute an unapproved third environment (such as arbitrarily replacing `anaconda3_sgomezalvarado_nightly` with `anaconda3_sgomezalvarado` to bypass an installation error). Each task must strictly use the designated architectural interpreter mapped to that pipeline stage.
+> **STRICT PROHIBITION ON COMPUTE & DATA PROCESSING ON `lnx201`**
+>
+> `lnx201` is a shared interactive login gateway for all CLASSE/CHESS beamline users. **NO data processing, computation, or memory/CPU-intensive tasks may be run directly on `lnx201` under any circumstances.**
+> Violating this slows down the beamline infrastructure for other scientists and violates facility policy.
 
----
+### 3.1 Prohibited Activities on `lnx201`
+Never run the following on `lnx201`:
+- Spot finding (`dials.find_spots`)
+- Unit cell indexing (`dials.index`)
+- Bravais setting refinement (`dials.refine_bravais_settings`)
+- Profile integration (`dials.integrate`)
+- Symmetry & scaling (`dials.symmetry`, `dials.scale`)
+- Mask generation / conversion reading full detector arrays (`mask_to_dials.py`)
+- Raw CBF diffraction frame stacking (`stack_em_all.py`)
+- Orientation matrix (ORM) solving with basinhopping (`solve_orm.py`)
+- 3D reciprocal space HKL conversion (`Pil6M_HKLConv_3D_2022_1rot.py` / `3rot.py`)
+- Reciprocal volume slicing and diagnostic projection rendering (`slice_visualizer.py` / `plot_slice`)
+- Temperature series clustering / XTEC / GMM execution
 
-## 2. Stage-Specific Architectural Interpreter Mappings
+### 3.2 Permitted Activities on `lnx201` (Inspection & Dispatch Only)
+The login node is strictly restricted to:
+- Filesystem navigation and lightweight directory listings (`ls`, `cd`, `find` with depth limits)
+- Reading/editing configuration files, job scripts, and logs (`cat`, `head`, `tail`, `grep`, `nano`)
+- Git operations (`git status`, `git pull`, `git commit`, `git push`)
+- Cluster monitoring (`qstat`, `qhost`, streaming logs via `tail -f`)
+- Submitting batch jobs to Sun Grid Engine (`qsub`)
 
-Beamline pipelines strictly segregate processing stages across dedicated environments to prevent library conflicts (e.g. between legacy AVX2 C-extensions and modern PyTorch CUDA stacks). Always dispatch each task to its designated architectural constant:
-
-| Architectural Constant | Remote Interpreter Path | Dedicated Pipeline Stage |
-| :--- | :--- | :--- |
-| **`PYTHON_EXEC`** | `/nfs/chess/sw/anaconda3_jpcr/bin/python` | **Legacy Reduction**: Raw Pilatus CBF frame stacking (`stack_em_all.py`), headless orientation matrix solving (`orm_solver.py`), and 1rot/3rot reciprocal space conversions (strictly frozen; required for `libhkl.so`). |
-| **`DIALS_ENV`** | `source /nfs/chess/sw/dials_sgomezalvarado/dials_env.sh`<br>(Python: `dials.python`) | **DIALS Reduction & Refinement Prep**: Pilatus 6M single-crystal data reduction (`dials.import`, `dials.find_spots`, `dials.index`, `dials.integrate`, `dials.scale`) and dual export for Jana2020 / Olex2. |
-| **`NIGHTLY_PYTHON`**<br>(or **`VIS_PYTHON`**) | `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python` | **Downstream Analysis & Preparation**: Diagnostic reciprocal slicing (`slice_visualizer.py`), `nxs_analysis_tools.plot_slice()`, linecuts (`Scissors`), and 4D dataset compilation (`generate_xtec_input.py`). |
-| **`GPU_PYTHON`**<br>(or **`XTEC_BIN`**) | `/nfs/chess/sw/qm2_XTEC312/bin/python`<br>(CLI: `/nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu`) | **GPU Machine Learning**: Unsupervised clustering (XTEC-GPU), PyTorch, `torchgmm`, and BIC model sweeps on `lnx4428`. |
-
----
-
-## 3. Remote Node Etiquette & Dual Execution Modes
-
-| Host / Queue Target | Node Class | Permitted Execution Protocol |
-| :--- | :--- | :--- |
-| **`lnx201.classe.cornell.edu`** | **Login Gateway** | Shell sessions, file editing, git, job submission. **NEVER run compute**, heavy array manipulation, or slicing here. |
-| **`interactive.q`** | **Interactive Compute** | **Interactive Human Sessions**: `qrsh -q interactive.q -l mem_free=350G`.<br>*Note for Automated Agents:* Automated `qrsh` sessions over SSH prompt for Kerberos passwords (`Password for <user>@CLASSE.CORNELL.EDU:`), causing unattended scripts to hang. |
-| **`all.q@lnx307*,lnx311*,lnx312*,lnx313*`** | **AVX2 Batch Compute** | **Automated / Agentic Sessions**: Submit short-lived SGE batch wrappers via `qsub` (200 GB RAM, AVX2 pool) and stream stdout/stderr via `tail -f <log>` or monitor via `qstat`. |
-| **`lnx4428`** via `-l cuda_free=1` | **CUDA GPU Compute** | **Grid Engine GPU Submission**: Mandatory `qsub -l cuda_free=1 <job_script>.sh` for all XTEC clustering workloads. |
-
----
-
-## 4. Mandatory "Show-Before-Submit" Verification Gate
-
-> [!IMPORTANT]
-> **Verification Gate Rule**: Prior to executing `qsub <job_script>.sh` for any stage (data reduction, 4D preparation, or GPU clustering), the assistant **MUST present the complete script text to the user**, highlighting:
-> 1. Target queue and hosts (`-q`)
-> 2. Memory allocation (`-l mem_free`)
-> 3. Parallel environment slots (`-pe sge_pe`) or GPU flags (`-l cuda_free=1`)
-> 4. Python binary path (`PYTHON_EXEC`, `NIGHTLY_PYTHON`, `GPU_PYTHON`)
-> 5. Output log path (`#$ -o`)
-> 6. Exact command-line parameters
-> 
-> The assistant must obtain explicit user confirmation before issuing the `qsub` submission command.
-> 
-> *XTEC GPU Batch Rule*: For XTEC-GPU clustering on `lnx4428` (`-l cuda_free=1`), scripts execute the autonomous pipeline (BIC model selection sweep $\rightarrow$ autonomous $k^* = \operatorname{argmin}_k \text{BIC}$ determination $\rightarrow$ final GMM clustering with reordering) in a single reservation. All CLI invocations on full reciprocal volumes must include `--streamed-preprocess` to prevent GPU memory exhaustion.
-
----
-
-## 5. Pipeline Architecture Detection (Two-Level Sample Hierarchy)
-
-Samples at CHESS ID4B are organized hierarchically:
-`/nfs/chess/id4baux/{cycle}/{experiment}/{reduction_pipeline}/{sample_name}/{sample_id}/`
-
-Because the material category (e.g. `FeTe2/`) can exist under *both* `nxrefine/` and `processed_old_way/` simultaneously if different sample mounts were processed with different tools, **always evaluate the specific sample leaf `{sample_name}/{sample_id}/`**:
-
-1. **NXRefine Architecture** (`nxrefine/{sample_name}/{sample_id}/`):
-   - Layout: Top-level wrapper files `*_<temp>.nxs` linking via `NXlink` to `<temp>/transform.nxs`.
-   - Coordinate Axes: **`['Ql', 'Qk', 'Qh']`** (Axis 0 = $L$, Axis 1 = $K$, Axis 2 = $H$).
-   - `Scissors` tuple order: **`(L, K, H)`**.
-2. **Legacy CHESS Architecture** (`processed_old_way/{sample_name}/{sample_id}/`):
-   - Layout: Subdirectories `<temp>/` containing `stack*.nxs`, `1rot_hkli.nxs`, `3rot_hkli.nxs`.
-   - Coordinate Axes: **`['H', 'K', 'L']`** (Axis 0 = $H$, Axis 1 = $K$, Axis 2 = $L$).
-   - `Scissors` tuple order: **`(H, K, L)`**.
-
----
-
-## 6. Strict Data Safety Policy
-
-> [!CAUTION]
-> **NEVER delete, remove (`rm`, `os.remove`), or truncate any `.nxs` files** (`transform.nxs`, `*hkli*.nxs`, `stack*.nxs`, `xtec_data.nxs`).
-> All re-runs, alternative reconstructions, or test outputs must use non-destructive versioning (`1rot_hkli_1.nxs`, `xtec_data_1.nxs`) rather than replacing or deleting existing datasets.
-
----
-
-## 7. Legacy Script Codebase (`$HOME/chess_legacy_codebase/`)
-
-Legacy reduction scripts (`stack_em_all.py`, `Pil6M_HKLConv_3D_2022_1rot.py`, `3rot.py`, `hkl.py`, `libhkl.so`) are maintained in the user's home directory:
-`$HOME/chess_legacy_codebase/` (overridable with `$CHESS_LEGACY_CODEBASE` or `--codebase`).
-
-Run-cycle paths (such as `/nfs/chess/id4baux/2026-2/...`) get archived periodically and must **never** be hardcoded into tools or submission scripts.
-
----
-
-## 8. Relative Filepaths for Markdown Artifacts & Reports
-
-When generating or exporting user-facing Markdown reports and summaries:
-- **Mandatory Relative Paths**: All embedded assets (figures, plots, slices, links) must strictly use relative paths (e.g. `![Caption](./slices_summary.png)`).
-- **Prohibition on Absolute Paths**: Never use absolute local paths (e.g. `/Users/...` or `/nfs/chess/...`) or paths pointing into hidden agent internal brain directories (`~/.gemini/antigravity-cli/brain/...`) inside Markdown documents destined for user workspaces.
-- **Rationale**: Prevents webview Content Security Policy (CSP) / sandbox blocking in VS Code and Markdown previewers, avoids web-root resolution errors, and ensures documents remain portable and reproducible when synced via OneDrive or Git.
-
+### 3.3 Mandatory Execution Protocol
+1. **Batch Compute via Sun Grid Engine (`qsub`)**:
+   All data processing pipelines must be packaged as bash wrapper scripts and submitted to SGE:
+   - **AVX2 Compute Nodes**: `qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=120G -pe sge_pe 24/32 script.sh`
+   - **Dedicated GPU Compute**: `qsub -l cuda_free=1 script.sh` (targeting `lnx4428`)
+2. **Interactive Worker Sessions (`qrsh` / `qlogin`)**:
+   If step-by-step interactive debugging or immediate visual inspection is strictly required, request an interactive compute worker slot:
+   ```bash
+   qrsh -q interactive.q -l mem_free=64G -pe sge_pe 8
+   ```
+   Execute the interactive workflow **only after the interactive shell session opens on the allocated worker node** (`lnx307`, `lnx308`, etc.). Never execute directly in the initial `lnx201` shell.
