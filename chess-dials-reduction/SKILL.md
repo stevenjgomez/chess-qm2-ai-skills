@@ -33,11 +33,25 @@ source /nfs/chess/sw/dials_sgomezalvarado/dials_env.sh
 ```
 * Python tools interacting with DIALS internal C++ data structures (`scitbx.array_family.flex`, `dxtbx`) must be executed via `dials.python`.
 
-### 1.3 Laboratory Frame & Goniometer Geometry
-At CHESS ID4B/QM2 with the Pilatus 6M detector in transmission geometry, the rotation axis in the laboratory coordinate system must be explicitly passed during import:
-```text
-geometry.goniometer.axes=0,-1,0
-```
+### 1.3 Laboratory Frame & Goniometer Geometry (Eulerian Cradle Spindle Tilt)
+At CHESS ID4B/QM2 with the Pilatus 6M detector in transmission geometry, the diffractometer utilizes a 4-circle Huber Eulerian cradle where Theta ($\theta$) rotates around vertical, Chi ($\chi$) tilts the cradle ring, and Phi ($\phi$) rotates the sample spindle.
+
+#### Nominal vs Multi-Sweep Tilts
+- For nominal transmission geometry ($\theta = 0^\circ, \chi = 90^\circ$), the rotation spindle points vertically downward:
+  ```text
+  geometry.goniometer.axes=0,-1,0
+  ```
+- **Multi-Sweep Collections**: When multiple sweeps are collected at distinct tilt angles ($\Delta\chi, \Delta\theta$) to increase reciprocal space coverage and eliminate blind spots, the spindle axis rotates away from $[0, -1, 0]$ according to Eulerian kinematics:
+  $$\vec{u}_{\text{DIALS}} = \begin{pmatrix} -\sin\theta \cos(\chi - 90^\circ) \\ -\cos\theta \cos(\chi - 90^\circ) \\ \sin(\chi - 90^\circ) \end{pmatrix}$$
+  *(Mapped to DIALS laboratory axes $+X$ horizontal right, $+Y$ vertically up, $+Z$ along beam away from source).*
+
+> [!CAUTION]
+> **Spindle Axis Misorientation Destroys Auto-Indexing!**
+> Omitting the calibrated spindle tilt for off-axis sweeps causes angular prediction errors of $5^\circ - 7^\circ$. Spot coordinates become severely distorted in reciprocal space, and auto-indexing fails completely across all algorithms (`fft3d`, `fft1d`, `real_space_grid_search`). Always extract motor angles from the SPEC scan file and calculate the exact spindle vector for each sweep:
+> - **Sweep 1** ($\theta = 0^\circ, \chi = 90^\circ$): `0.0, -1.0, 0.0`
+> - **Sweep 2** ($\theta = +3^\circ, \chi = 88^\circ$): `0.0348995, -0.9980212, -0.05230407`
+> - **Sweep 3** ($\theta = -3^\circ, \chi = 97^\circ$): `-0.12186934, -0.9911859, 0.05194585`
+
 
 ### 1.4 Critical Detector Calibration & Panel Origin
 > [!IMPORTANT]
@@ -216,33 +230,48 @@ qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
    > - In crystals with anisotropic shapes (e.g. flat plates, needles) and significant absorption (transition metals, heavy elements), reflections related by high-order rotation axes (3-fold, 4-fold, 6-fold) are measured at spindle angles separated by $90^\circ$ or $120^\circ$. Differential path lengths cause severe intensity discrepancies, falsely cratering raw correlation coefficients down to $\text{CC} < 0.25$.
    > - Consequently, `dials.symmetry` may reject the true high-symmetry Laue group (e.g. hexagonal $P6/mmm$) and settle on an orthorhombic or monoclinic subgroup (e.g. $Cmmm$ / $C222$).
    > - **Actionable Rule**: Whenever the metric unit cell is pseudo-hexagonal ($b_{\text{ortho}} \approx \sqrt{3}a_{\text{ortho}}$) or pseudo-tetragonal, **never blindly accept the lower-symmetry assignment without testing high-symmetry scaling**. Reindex to the candidate high-symmetry space group (`dials.reindex ... space_group=<HighSym>`) and run `dials.scale` with `physical.absorption_level=high`. If the data scales cleanly with comparable $R_{\text{merge}}$ and high $\text{CC}_{1/2}$, the apparent symmetry breaking was an absorption artifact. Generate refinement bundles for both space groups.
-5. **Multi-Sweep Scaling & Absorption Correction**:
-   ```bash
-   dials.scale symmetrized.expt symmetrized.refl \
-       overwrite_existing_models=True \
-       absorption_level=high \
-       anomalous=True
-   ```
-6. **Dual SHELX Refinement Bundle Generation**:
-   - **Unmerged SHELX (Jana2020)**:
+5. **Multi-Sweep Joint Alignment & Scaling**:
+   - For multi-sweep datasets, resolve indexing ambiguities across all sweeps into a consistent setting using `dials.cosym`:
+     ```bash
+     dials.cosym sweep1/integrated.expt sweep1/integrated.refl \
+                 sweep2/integrated.expt sweep2/integrated.refl \
+                 sweep3/integrated.expt sweep3/integrated.refl \
+                 space_group=P6322
+     ```
+   - Scale all sweeps together with high-level physical absorption correction:
+     ```bash
+     dials.scale symmetrized.expt symmetrized.refl \
+         overwrite_existing_models=True \
+         absorption_level=high \
+         anomalous=True
+     ```
+
+6. **Dual SHELX Refinement Bundle Generation (Hexagonal & Orthorhombic)**:
+   - **Hexagonal Unmerged SHELX (Jana2020)**:
      ```bash
      dials.export scaled.expt scaled.refl \
          format=shelx \
          composition=K2Co2TeO6 \
-         shelx.scale=False \
-         output.reflections=for_refinement/unmerged.hkl \
-         output.experiment=for_refinement/unmerged.ins
+         shelx.scale=False
+     mv dials.hkl for_refinement/hex_unmerged.hkl
+     mv dials.ins for_refinement/hex_unmerged.ins
      ```
-   - **Merged SHELX (Olex2 / SHELXL)**:
+   - **Hexagonal Merged SHELX (Olex2 / SHELXL)**:
+     > [!NOTE]
+     > `dials.merge` writes an MTZ file (`merged.mtz`). Convert it to SHELX `.hkl` using `iotbx.reflection_file_converter`:
      ```bash
-     dials.merge scaled.expt scaled.refl output.html=None
-     dials.export merged.expt merged.refl \
-         format=shelx \
-         composition=K2Co2TeO6 \
-         shelx.scale=False \
-         output.reflections=for_refinement/merged.hkl \
-         output.experiment=for_refinement/merged.ins
+     dials.merge scaled.expt scaled.refl output.html=None output.mtz=merged.mtz
+     iotbx.reflection_file_converter merged.mtz --shelx=for_refinement/hex_merged.hkl --label="IMEAN,SIGIMEAN"
+     cp for_refinement/hex_unmerged.ins for_refinement/hex_merged.ins
      ```
+   - **Orthohexagonal C-Centered Export**:
+     > [!IMPORTANT]
+     > Direct `dials.reindex` with an orthohexagonal operator (`a,a+2*b,c`) on a $P6_322$ dataset fails with `Unsuitable value for rational rotation matrix` because 6-fold / 3-fold symmetry operators cannot exist on an orthorhombic lattice.
+     > To export in the orthohexagonal setting ($a, b=\sqrt{3}a, c$):
+     > 1. Set the crystal space group to the orthorhombic subgroup ($C222$), and unit cell to $(a, \sqrt{3}a, c, 90^\circ, 90^\circ, 90^\circ)$.
+     > 2. Transform Miller indices in the reflection table: $h_O = h$, $k_O = h + 2k$, $l_O = l$.
+     > 3. Export unmerged reflections via `dials.export` (`for_refinement/unmerged.hkl`).
+     > 4. Merge under $C222$ via `dials.merge` and convert MTZ to `for_refinement/merged.hkl`.
 
 ---
 
@@ -253,8 +282,11 @@ qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
 | **Running data processing on `lnx201`** | Attempting interactive execution on login node violates cluster etiquette and beamline policy. | **Strictly prohibited**. All processing (Stage 1 and Stage 2) must be submitted via SGE batch (`qsub`) or executed inside an allocated `qrsh` worker session. |
 | **`MemoryError` during `dials.integrate`** (180 GB memory for shoeboxes) | Uncalibrated beam center in CBF headers ($126\text{ mm}$ offset) or drifting unit cell inflating mosaicity $\sigma_m > 2.5^\circ$. | 1. Pass `geometry.detector.panel.origin` from pyFAI PONI.<br>2. Run `dials.refine` with `scan_varying=False` and `fix=cell`. |
 | **`No suitable lattice could be found` during `dials.index`** | Passing `indexing.known_symmetry.unit_cell` when crystal possesses supercell reflections ($62.5\text{ \AA}$ vs $5.22\text{ \AA}$) or non-standard orientation. | Run unconstrained auto-indexing first (`dials.index imported.expt strong.refl`). Let DIALS find the true lattice naturally. |
+| **Multi-sweep indexing fails (0 spots indexed) on sweeps 2 or 3** | Default goniometer axis `axes=0,-1,0` used for tilted sweeps. Off-axis tilts ($\Delta\chi = 7^\circ, \Delta\theta = 3^\circ$) introduce severe angular error. | Extract Eulerian motor positions ($\theta, \chi, \phi$) from SPEC file and calculate calibrated spindle vector $\vec{u}_{\text{DIALS}}$ for each sweep during `dials.import`. |
+| **`Unsuitable value for rational rotation matrix` during `dials.reindex`** | Attempting a basis change from hexagonal to orthorhombic without reducing space group symmetry. | Convert the crystal space group to an orthorhombic subgroup ($C222$), update the cell to $(a, \sqrt{3}a, c)$, and transform Miller indices ($h, h+2k, l$). |
 | **Refinement fails or yields huge RMSD after Bravais selection** | Candidate Bravais setting required an axis permutation (`cb_op != a,b,c`), but reflections were not reindexed. | Run `dials.reindex indexed.refl change_of_basis_op=<cb_op>` before running `dials.refine`. |
 | **False lower symmetry selection in `dials.symmetry` (e.g., $C222$ instead of $P6_322$)** | `dials.symmetry` runs on **unscaled raw intensities**. Anisotropic crystal shape (e.g., flat plates) causes severe angle-dependent path length differences across $120^\circ$ rotation, cratering raw correlation coefficients ($\text{CC} \approx 0.22$). | If the metric lattice is pseudo-hexagonal ($b \approx \sqrt{3}a$), test scaling directly in the high-symmetry group: `dials.reindex ... space_group="P6322"` followed by `dials.scale` with `physical.absorption_level=high`. If $R_{\text{merge}}$ is comparable and $R_{\text{pim}}$ is strong ($\le 3-4\%$), export both high- and low-symmetry bundles to `for_refinement/`. |
+| **`dials.merge` does not create `.refl` file** | `dials.merge` outputs MTZ format by design (`merged.mtz`). | Convert MTZ to SHELX `.hkl` via `iotbx.reflection_file_converter merged.mtz --shelx=merged.hkl --label="IMEAN,SIGIMEAN"`. |
 
 ---
 
