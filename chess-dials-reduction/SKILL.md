@@ -28,9 +28,25 @@ At CHESS ID4B/QM2 with the Pilatus 6M detector in transmission geometry, the rot
 geometry.goniometer.axes=0,-1,0
 ```
 
-### 1.3 Cluster Queue & Resource Etiquette
+### 1.3 Critical Detector Calibration & Panel Origin
+> [!IMPORTANT]
+> **Raw Pilatus 6M CBF Headers Contain Stale Beam Center Values!**
+> - The mini-CBF header written by the detector computer frequently records a default uncalibrated beam centre: $(334.54, 433.44)\text{ mm}$ ($(1945, 2520)\text{ px}$).
+> - The true calibrated transmission beam centre from the pyFAI calibration (`ceO2_15keV_trans.poni`) is:
+>   $$\text{Beam Centre} = (208.32, 205.76)\text{ mm} \quad ((1211.2, 1196.3)\text{ px}), \quad \text{Distance} = 499.43\text{ mm}$$
+> - **Converting pyFAI PONI to DIALS Panel Origin**:
+>   In pyFAI (C-order, meters): $Poni_1$ is slow/Y axis, $Poni_2$ is fast/X axis, and $Distance$ is sample-to-detector distance.
+>   In DIALS (laboratory frame, millimeters):
+>   $$\text{origin} = (-Poni_2 \times 1000, \, +Poni_1 \times 1000, \, -Distance \times 1000)$$
+>   *Example:* For `ceO2_15keV_trans.poni` ($Poni_1=0.205764$, $Poni_2=0.208324$, $Distance=0.499430$):
+>   ```text
+>   geometry.detector.panel.origin="-208.324,205.764,-499.430"
+>   ```
+> - **Impact of Omission**: If this calibrated origin is omitted, DIALS attempts to fit spot centroids against predictions offset by $126\text{ mm}$. Mosaicity artificially inflates to $>2.5^\circ$, shoeboxes expand to $1583 \times 1646\text{ px} \times 295\text{ frames}$, and `dials.integrate` crashes with a catastrophic **`MemoryError` (180 GB shoebox memory)**.
+
+### 1.4 Cluster Queue & Resource Etiquette
 - **Login Node (`lnx201`)**: Used exclusively for lightweight inspection, Stage 1 spot finding, and indexing. Never run heavy parallel integration on `lnx201`.
-- **Compute Queues (`all.q@lnx307*`, `lnx311*`, `lnx312*`, `lnx313*`)**: All multi-core integration jobs (`dials.integrate nproc=32`) must be submitted through Sun Grid Engine (`qsub`).
+- **Compute Queues (`all.q@lnx307*`, `lnx311*`, `lnx312*`, `lnx313*`)**: All multi-core integration jobs (`dials.integrate nproc=24` or `32`) must be submitted through Sun Grid Engine (`qsub`).
 
 ---
 
@@ -65,22 +81,22 @@ The DIALS reduction pipeline strictly mirrors the beamline's parallel directory 
 ```mermaid
 flowchart TD
     subgraph Stage1["Stage 1: Interactive Verification (lnx201)"]
-        A["Raw CBF Sweeps (*_002, *_003, *_004)"] --> B["dials.import (axes=0,-1,0)"]
+        A["Raw CBF Sweeps (*_002, *_003, *_004)"] --> B["dials.import (axes=0,-1,0 + calibrated origin)"]
         B --> C["dials.generate_mask (pixels.mask)"]
-        C --> D["dials.find_spots (threshold=5000, gain=1, d_min=0.75)"]
-        D --> E["dials.index (known_symmetry: unit cell & space group)"]
+        C --> D["dials.find_spots (mp.nproc=24/32, threshold=5000, d_min=0.75)"]
+        D --> E["dials.index (Unconstrained Auto-Indexing)"]
         E --> F["dials.refine_bravais_settings"]
-        F --> G["bravais_matcher.py (Metric Scoring)"]
+        F --> G["bravais_matcher.py (Metric & Supercell Scoring)"]
     end
 
     subgraph Gate["Human-in-the-Loop Checkpoint"]
-        G --> H{"Verify Bravais Lattice & Setting"}
+        G --> H{"Verify Bravais Lattice, Setting & cb_op"}
     end
 
-    subgraph Stage2["Stage 2: Distributed Batch Reduction (qsub on lnx312/lnx313)"]
-        H -->|Approved| I["dials.reindex (change_of_basis_op)"]
-        I --> J["dials.refine (bravais_setting_N.expt)"]
-        J --> K["dials.integrate (32 CPU cores)"]
+    subgraph Stage2["Stage 2: Distributed Batch Reduction (qsub on lnx311/lnx312/lnx313)"]
+        H -->|Approved| I["dials.reindex (change_of_basis_op, e.g. b,c,a)"]
+        I --> J["dials.refine (scan_varying=False, fix=cell)"]
+        J --> K["dials.integrate (24/32 parallel CPU cores)"]
         K --> L["dials.symmetry"]
         L --> M["dials.scale (anomalous=True, absorption_level=high)"]
         M --> N["dials.export (Unmerged SHELX for Jana2020)"]
@@ -101,51 +117,60 @@ source /nfs/chess/sw/dials_sgomezalvarado/dials_env.sh
 
 python3 scripts/orchestrate_dials.py stage1 \
     --work-dir /nfs/chess/id4baux/{cycle}/{experiment}/dials/{sample}/{sample_id}/{temp} \
-    --raw-dir /nfs/chess/id4b/{cycle}/{experiment}/raw6M/{sample}/{sample_id}/{temp} \
+    --raw-dir /nfs/chess/id4b/{cycle}/{experiment}/raw6M/{sample}/{sample_id}/{temp}/scan_002 \
+    --poni-file /nfs/chess/id4baux/{cycle}/{experiment}/calibrations/ceO2_15keV_trans.poni \
     --goniometer-axes 0,-1,0 \
     --edf-mask /nfs/chess/id4baux/{cycle}/{experiment}/calibrations/mask_trans.edf \
     --gain 1.0 \
     --global-threshold 5000 \
     --d-min 0.75 \
+    --nproc 24 \
     --unit-cell "a b c alpha beta gamma" \
     --space-group "<SpaceGroup>"
 ```
 
 #### Under the Hood:
-1. **Multi-Sweep Joint Import**:
-   Discovers all available scan directories (e.g., `_002`, `_003`, `_004`) and imports them into a unified multi-sweep sequence list:
+1. **Calibrated Import**:
+   Imports raw frames while overriding the stale detector origin with the true beam center from the PONI file:
    ```bash
-   dials.import path_to_scan1/*.cbf path_to_scan2/*.cbf path_to_scan3/*.cbf geometry.goniometer.axes=0,-1,0
+   dials.import path_to_scan/*.cbf \
+       geometry.detector.panel.origin="-208.324,205.764,-499.430" \
+       geometry.goniometer.axes=0,-1,0
    ```
 2. **Detector Masking**:
    Generates `pixels.mask` using detector module gap geometry and merges with the beamline `mask_trans.edf` mask:
    ```bash
    dials.generate_mask imported.expt output.mask=pixels.mask
    ```
-3. **Calibrated Spot Finding**:
-   Finds diffraction peak centroids using beamline-calibrated thresholding:
+3. **Multi-Threaded Spot Finding**:
+   Finds diffraction peak centroids using beamline-calibrated thresholding across parallel cores:
    ```bash
-   dials.find_spots find_spots.phil imported.expt mask=pixels.mask spotfinder.filter.d_min=0.75
+   dials.find_spots find_spots.phil imported.expt mask=pixels.mask spotfinder.filter.d_min=0.75 mp.nproc=24
    ```
-4. **Constrained Auto-Indexing**:
-   Indexes reflections against the known unit cell and space group:
+4. **Unconstrained Auto-Indexing**:
+   > [!TIP]
+   > **Do Not Constrain Symmetry During Initial Indexing on Modulated / Superstructure Crystals!**
+   > Systems with supercells (e.g. KCTO $12 \times 12$ supercell where $a'=62.5\text{ \AA}$) will be falsely rejected if constrained to the subcell ($5.22\text{ \AA}$). Always run unconstrained auto-indexing:
    ```bash
-   dials.index imported.expt strong.refl indexing.known_symmetry.unit_cell="5.21 5.21 13.00 90 90 120" indexing.known_symmetry.space_group="P6322"
+   dials.index imported.expt strong.refl
    ```
+   Unconstrained indexing with calibrated geometry yields sub-pixel RMSDs ($<1.3\text{ px}$) and indexes $>65\%$ of reflections.
 5. **Bravais Setting Scoring**:
-   Executes `dials.refine_bravais_settings indexed.expt indexed.refl`, then runs `bravais_matcher.py` to rank settings against the target crystallographic parameters.
+   Executes `dials.refine_bravais_settings indexed.expt indexed.refl`, then runs `bravais_matcher.py` to rank settings against target crystallographic parameters.
 
 ---
 
 ### 4.2 Human-in-the-Loop Checkpoint: Bravais Selection Gate
-Before proceeding to Stage 2, the agent must present the evaluated Bravais table to the user:
+Before proceeding to Stage 2, present the evaluated Bravais table to the user:
 ```text
 Sol  Fit      RMSD   CC           Lattice  Unit Cell                                  cb_op           Score 
 ---------------------------------------------------------------------------------------------------------------
-*12  0.0507   0.089  0.812/0.892  hR       4.76  4.76 12.99  90.0  90.0 120.0       -c,a,-b+c       0.012 
- 11  0.0620   0.095  0.750/0.810  oC       ...
+ 12  0.2327   0.378  0.033/0.125  hP       62.53  62.53  12.61  90.0  90.0 120.0       b,c,a           0.012 
+ 11  0.2327   0.373  0.116/0.899  oC       62.51 108.33  12.61  90.0  90.0  90.0       b,b+2*c,a       ...
 ```
-* **Required Confirmation**: Confirm the target solution setting number (e.g. `12`) and the corresponding change of basis operator (e.g. `-c,a,-b+c` or `a,b,c`).
+* **Required Confirmation**:
+  1. Setting number (e.g. `12`).
+  2. Change of basis operator (`cb_op`, e.g. `b,c,a`). When DIALS indexes with $a$ along the hexagonal $c$-axis, `cb_op = b,c,a` permutes the axes back into the standard hexagonal setting ($a=b=62.53\text{ \AA}, c=12.61\text{ \AA}$).
 
 ---
 
@@ -154,26 +179,30 @@ Submit the heavy compute integration and scaling job to Sun Grid Engine (`qsub`)
 
 ```bash
 qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
-     -l mem_free=120G -pe sge_pe 32 \
+     -l mem_free=120G -pe sge_pe 24 \
      example_job_scripts/dials-batch-template.sh \
      "/nfs/chess/id4baux/{cycle}/{experiment}/dials/{sample}/{sample_id}/{temp}" \
-     "<bravais_setting_number>" \
-     "<change_of_basis_op>" \
-     "<chemical_composition>"
+     "12" \
+     "b,c,a" \
+     "K2Co2TeO6"
 ```
 
 #### Under the Hood:
-1. **Reindexing (if necessary)**:
+1. **Reindexing to Standard Setting**:
    ```bash
-   dials.reindex indexed.refl change_of_basis_op=<cb_op> output.reflections=reindexed.refl
+   dials.reindex indexed.refl change_of_basis_op=b,c,a output.reflections=reindexed.refl
    ```
-2. **Refinement of Selected Bravais Model**:
+2. **Static Refinement (Fixed Unit Cell)**:
+   > [!IMPORTANT]
+   > Always specify `scan_varying=False` and `refinement.parameterisation.crystal.fix=cell` before integration. Unconstrained scan-varying refinement causes unit cell parameter drift and artificial mosaicity inflation.
    ```bash
-   dials.refine bravais_setting_<N>.expt reindexed.refl
+   dials.refine bravais_setting_12.expt reindexed.refl \
+       scan_varying=False \
+       refinement.parameterisation.crystal.fix=cell
    ```
 3. **Multi-Threaded 3D Profile Integration**:
    ```bash
-   dials.integrate refined.expt refined.refl nproc=32
+   dials.integrate refined.expt refined.refl nproc=24
    ```
 4. **Symmetry Determination**:
    ```bash
@@ -181,24 +210,48 @@ qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
    ```
 5. **Multi-Sweep Scaling & Absorption Correction**:
    ```bash
-   dials.scale symmetrized.expt symmetrized.refl overwrite_existing_models=True absorption_level=high anomalous=True
+   dials.scale symmetrized.expt symmetrized.refl \
+       overwrite_existing_models=True \
+       absorption_level=high \
+       anomalous=True
    ```
 6. **Dual SHELX Refinement Bundle Generation**:
    - **Unmerged SHELX (Jana2020)**:
      ```bash
-     dials.export scaled.expt scaled.refl format=shelx composition=<comp> shelx.scale=False output.reflections=for_refinement/unmerged.hkl output.experiment=for_refinement/unmerged.ins
+     dials.export scaled.expt scaled.refl \
+         format=shelx \
+         composition=K2Co2TeO6 \
+         shelx.scale=False \
+         output.reflections=for_refinement/unmerged.hkl \
+         output.experiment=for_refinement/unmerged.ins
      ```
    - **Merged SHELX (Olex2 / SHELXL)**:
      ```bash
      dials.merge scaled.expt scaled.refl output.html=None
-     dials.export merged.expt merged.refl format=shelx composition=<comp> shelx.scale=False output.reflections=for_refinement/merged.hkl output.experiment=for_refinement/merged.ins
+     dials.export merged.expt merged.refl \
+         format=shelx \
+         composition=K2Co2TeO6 \
+         shelx.scale=False \
+         output.reflections=for_refinement/merged.hkl \
+         output.experiment=for_refinement/merged.ins
      ```
 
 ---
 
-## 5. Handoff to Refinement Programs
+## 5. Troubleshooting & Lessons Learned
+
+| Issue / Failure | Root Cause | Solution |
+| :--- | :--- | :--- |
+| **`MemoryError` during `dials.integrate`** (180 GB memory for shoeboxes) | Uncalibrated beam center in CBF headers ($126\text{ mm}$ offset) or drifting unit cell inflating mosaicity $\sigma_m > 2.5^\circ$. | 1. Pass `geometry.detector.panel.origin` from pyFAI PONI.<br>2. Run `dials.refine` with `scan_varying=False` and `fix=cell`. |
+| **`No suitable lattice could be found` during `dials.index`** | Passing `indexing.known_symmetry.unit_cell` when crystal possesses supercell reflections ($62.5\text{ \AA}$ vs $5.22\text{ \AA}$) or non-standard orientation. | Run unconstrained auto-indexing first (`dials.index imported.expt strong.refl`). Let DIALS find the true lattice naturally. |
+| **Refinement fails or yields huge RMSD after Bravais selection** | Candidate Bravais setting required an axis permutation (`cb_op != a,b,c`), but reflections were not reindexed. | Run `dials.reindex indexed.refl change_of_basis_op=<cb_op>` before running `dials.refine`. |
+| **Spot finding hangs or times out on `lnx201`** | Single-core execution on 3650 images takes $>20\text{ min}$ over interactive SSH. | Always pass `mp.nproc=24` or run spot finding within an SGE batch job. |
+
+---
+
+## 6. Handoff to Refinement Programs
 
 For full GUI import instructions, refer to [`references/jana_olex_import_guide.md`](references/jana_olex_import_guide.md).
 
-- **Jana2020**: Open **New Structure**, select **SHELX format**, and load `for_refinement/unmerged.ins` (which pairs with `unmerged.hkl`). Configure modulation vectors $\mathbf{q}$ or absorption models directly in Jana.
+- **Jana2020**: Open **New Structure**, select **SHELX format**, and load `for_refinement/unmerged.ins` (which pairs with `unmerged.hkl`). Configure modulation vectors $\mathbf{q}$, absorption models, or twin matrices directly in Jana.
 - **Olex2 / SHELXL**: Open `for_refinement/merged.ins` in Olex2, solve using SHELXT, and refine using SHELXL.

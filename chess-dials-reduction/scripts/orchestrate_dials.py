@@ -15,6 +15,39 @@ import subprocess
 import sys
 
 
+def parse_poni_origin(poni_path):
+    """
+    Extract DIALS detector panel origin from pyFAI .poni file.
+    
+    In pyFAI (C-order, meters):
+      Distance: sample-to-detector distance
+      Poni1: Y-axis (slow axis) beam centre
+      Poni2: X-axis (fast axis) beam centre
+      
+    In DIALS (laboratory frame, millimeters):
+      origin = (-Poni2 * 1000, +Poni1 * 1000, -Distance * 1000)
+    """
+    if not os.path.exists(poni_path):
+        raise FileNotFoundError(f"PONI file not found: {poni_path}")
+
+    dist, p1, p2 = None, None, None
+    with open(poni_path, "r") as f:
+        for line in f:
+            line_str = line.strip()
+            if line_str.lower().startswith("distance:"):
+                dist = float(line_str.split(":", 1)[1])
+            elif line_str.lower().startswith("poni1:"):
+                p1 = float(line_str.split(":", 1)[1])
+            elif line_str.lower().startswith("poni2:"):
+                p2 = float(line_str.split(":", 1)[1])
+
+    if dist is None or p1 is None or p2 is None:
+        raise ValueError(f"Could not parse Distance, Poni1, and Poni2 from {poni_path}")
+
+    origin_str = f"{-p2 * 1000.0:.3f},{p1 * 1000.0:.3f},{-dist * 1000.0:.3f}"
+    return origin_str
+
+
 def run_cmd(cmd, cwd=None, log_file=None):
     """Execute a shell command with real-time output and error handling."""
     print(f"\n[RUNNING]: {cmd}")
@@ -70,7 +103,6 @@ def stage_1(args):
     cbf_inputs = []
     if args.raw_dir:
         raw_dir = os.path.abspath(args.raw_dir)
-        # Check if raw_dir has subdirectories (multiple scans) or direct CBFs
         subdirs = sorted([d for d in glob.glob(os.path.join(raw_dir, "*")) if os.path.isdir(d)])
         if subdirs:
             print(f"Found {len(subdirs)} scan directories in {raw_dir}:")
@@ -86,8 +118,24 @@ def stage_1(args):
 
     input_str = " ".join(cbf_inputs)
 
+    # Resolve detector origin
+    detector_origin = args.detector_origin
+    if not detector_origin and args.poni_file:
+        print(f"Extracting calibrated detector origin from PONI: {args.poni_file}")
+        detector_origin = parse_poni_origin(args.poni_file)
+        print(f"  Calculated DIALS detector origin: {detector_origin}")
+
     # 1. dials.import
-    import_cmd = f"{dials_env} && dials.import {input_str} geometry.goniometer.axes={args.goniometer_axes}"
+    import_parts = [
+        f"{dials_env}",
+        "&& dials.import",
+        input_str,
+        f"geometry.goniometer.axes={args.goniometer_axes}"
+    ]
+    if detector_origin:
+        import_parts.append(f'geometry.detector.panel.origin="{detector_origin}"')
+
+    import_cmd = " ".join(import_parts)
     run_cmd(import_cmd, cwd=work_dir)
 
     # 2. Mask generation
@@ -119,18 +167,25 @@ def stage_1(args):
 }}
 """)
 
-    # 4. dials.find_spots
+    # 4. dials.find_spots (multiprocessing enabled)
     find_spots_cmd = (
         f"{dials_env} && dials.find_spots {phil_path} imported.expt "
-        f"mask={mask_file} spotfinder.filter.d_min={args.d_min}"
+        f"mask={mask_file} spotfinder.filter.d_min={args.d_min} mp.nproc={args.nproc}"
     )
     run_cmd(find_spots_cmd, cwd=work_dir)
 
     # 5. dials.index
+    # Note: Unconstrained auto-indexing is preferred to allow discovery of supercells and true lattices
     index_args = ["imported.expt", "strong.refl"]
-    if args.unit_cell and args.space_group:
-        index_args.append(f'indexing.known_symmetry.unit_cell="{args.unit_cell}"')
-        index_args.append(f'indexing.known_symmetry.space_group="{args.space_group}"')
+    if args.constrain_symmetry:
+        if args.unit_cell and args.space_group:
+            index_args.append(f'indexing.known_symmetry.unit_cell="{args.unit_cell}"')
+            index_args.append(f'indexing.known_symmetry.space_group="{args.space_group}"')
+        else:
+            print("Warning: --constrain-symmetry requested but --unit-cell or --space-group is missing. Proceeding unconstrained.")
+    else:
+        print("Running unconstrained auto-indexing (discovers true lattice/superstructure without bias)...")
+
     index_cmd = f"{dials_env} && dials.index {' '.join(index_args)}"
     run_cmd(index_cmd, cwd=work_dir)
 
@@ -175,8 +230,16 @@ def stage_2(args):
     if not os.path.exists(os.path.join(work_dir, bravais_expt)):
         raise FileNotFoundError(f"Experiment file {bravais_expt} not found in {work_dir}")
 
-    # 2. dials.refine
-    refine_cmd = f"{dials_env} && dials.refine {bravais_expt} {refl_file}"
+    # 2. dials.refine (fixed unit cell & scan_varying=False to prevent mosaicity/cell explosion)
+    refine_parts = [
+        f"{dials_env}",
+        f"&& dials.refine {bravais_expt} {refl_file}",
+        "scan_varying=False"
+    ]
+    if args.fix_cell:
+        refine_parts.append("refinement.parameterisation.crystal.fix=cell")
+
+    refine_cmd = " ".join(refine_parts)
     run_cmd(refine_cmd, cwd=work_dir)
 
     # 3. dials.integrate
@@ -246,18 +309,23 @@ def main():
     p1.add_argument("--raw-dir", help="Path to raw scans directory (e.g. .../raw6M/sample/mount/temp/)")
     p1.add_argument("--cbf-pattern", help="Direct CBF glob pattern (e.g. '/path/to/*.cbf')")
     p1.add_argument("--goniometer-axes", default="0,-1,0", help="Rotation axis in laboratory frame (default: 0,-1,0)")
+    p1.add_argument("--detector-origin", help="Panel origin: '-Poni2*1000,Poni1*1000,-Distance*1000' (e.g. -208.324,205.764,-499.430)")
+    p1.add_argument("--poni-file", help="Path to pyFAI .poni calibration file (auto-calculates detector origin)")
     p1.add_argument("--edf-mask", help="Path to beamline calibration EDF mask (e.g. mask_trans.edf)")
     p1.add_argument("--gain", type=float, default=1.0, help="Spotfinder detector gain")
     p1.add_argument("--global-threshold", type=int, default=5000, help="Spotfinder global intensity threshold")
     p1.add_argument("--d-min", type=float, default=0.75, help="High-resolution spotfinder filter cut-off in Angstroms")
-    p1.add_argument("--unit-cell", help="Target unit cell: 'a b c alpha beta gamma'")
-    p1.add_argument("--space-group", help="Target space group symbol (e.g. P6322)")
+    p1.add_argument("--nproc", type=int, default=32, help="Number of CPU cores for parallel spot finding")
+    p1.add_argument("--unit-cell", help="Target unit cell for Bravais ranking: 'a b c alpha beta gamma'")
+    p1.add_argument("--space-group", help="Target space group symbol for Bravais ranking (e.g. P6322)")
+    p1.add_argument("--constrain-symmetry", action="store_true", help="Force indexing against known unit cell & space group (default: False)")
 
     # Subcommand: stage2
     p2 = subparsers.add_parser("stage2", parents=[common_args], help="Run Stage 2: Refine, Integrate, Scale, Export")
     p2.add_argument("--bravais-setting", type=int, required=True, help="Chosen Bravais setting number (e.g. 12)")
     p2.add_argument("--cb-op", default="a,b,c", help="Change of basis operator (e.g. -c,a,-b+c)")
     p2.add_argument("--nproc", type=int, default=32, help="Number of CPU cores for parallel integration")
+    p2.add_argument("--fix-cell", action="store_true", default=True, help="Fix unit cell parameters during static refinement (default: True)")
     p2.add_argument("--absorption-level", default="high", choices=["low", "medium", "high"], help="DIALS scale absorption correction")
     p2.add_argument("--anomalous", default="True", choices=["True", "False"], help="Preserve anomalous Bijvoet pairs")
     p2.add_argument("--composition", default="FeTe2", help="Chemical formula for SHELX SFAC/UNIT generation (e.g. K2Co2TeO6)")
