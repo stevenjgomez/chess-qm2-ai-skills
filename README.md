@@ -10,7 +10,11 @@ A modular collection of domain-specific scientific computing and synchrotron ski
 | :--- | :--- | :--- |
 | **`chess-legacy-reduction`** | [`chess-legacy-reduction/`](./chess-legacy-reduction/) | **Autonomous Beamline Reduction Pipeline**: Automates stacking raw Pilatus 6M CBF detector frames, headless orientation matrix (ORM) solving via `scipy.optimize.basinhopping`, 3D reciprocal space HKL conversion (`1rot` and `3rot`), cross-sectional plane visualization ($(HK0)$, $(H0L)$, $(0KL)$), human-in-the-loop verification gates, and Grid Engine (`qsub`) batch scheduling across AVX2-capable CLASSE nodes. Includes a turnkey Python CLI suite in `scripts/`. |
 | **`chess-dials-reduction`** | [`chess-dials-reduction/`](./chess-dials-reduction/) | **DIALS Single-Crystal Reduction & Refinement Preparation**: Integrates raw Pilatus 6M CBF frame sweeps using DIALS at CHESS ID4B/QM2. Features joint multi-sweep import, calibrated spot finding, Bravais lattice scoring against known unit cells, and dual SHELX export (`unmerged.ins`/`.hkl` for Jana2020 and `merged.ins`/`.hkl` for Olex2/SHELXL). Includes a two-stage CLI orchestrator and SGE batch templates. |
-| **`reciprocal-space-analysis`** | [`reciprocal-space-analysis/`](./reciprocal-space-analysis/) | **3D Reciprocal Space & NeXus Analysis**: Reconstruction, indexing, alignment, and slicing of 3D reciprocal space volumes (NeXus/HDF5) via `nxs_analysis_tools`. Enforces skew projections for non-orthogonal/hexagonal lattices, multi-dataset linecuts, and interactive cluster execution etiquette (`qrsh`). |
+| **`reciprocal-space-analysis`** | [`reciprocal-space-analysis/`](./reciprocal-space-analysis/) | **3D Reciprocal Space & NeXus Master Guide**: Architectural principles, coordinate frames (Legacy $[H, K, L]$ vs NXRefine $[Ql, Qk, Qh]$), lazy hyperslab slicing, and cluster execution etiquette (`qrsh`). Delegates specialized tasks to modular sister skills. |
+| **`reciprocal-space-plotting`** | [`reciprocal-space-plotting/`](./reciprocal-space-plotting/) | **2D Reciprocal Slices & Publication Figures**: Fast recipe-driven generation of 2D slices ($HK, HL, KL$), 3-panel orthogonal summary plots, physical aspect ratio ($b^*/a^*, c^*/a^*$) corrections, logarithmic colormaps, and crystallographic skew grid lines. Includes CLI scripts in `scripts/`. |
+| **`reciprocal-space-animation`** | [`reciprocal-space-animation/`](./reciprocal-space-animation/) | **Volume & Thermal Animations**: Generates high-quality dynamic animations (GIF, MP4) for scrolling axis scans ($L$-scans, $H$-scans) and temperature-series evolution across phase transitions, with memory leak prevention. Includes CLI scripts in `scripts/`. |
+| **`reciprocal-space-linecuts`** | [`reciprocal-space-linecuts/`](./reciprocal-space-linecuts/) | **1D Reciprocal Linecuts with Scissors**: Extracts 1D intensity profiles along arbitrary reciprocal axes, performs transverse window integration, background subtraction, and linecut visualization. Includes CLI scripts in `scripts/`. |
+| **`temperature-series-analysis`** | [`temperature-series-analysis/`](./temperature-series-analysis/) | **CHESS Temperature-Dependent Analysis**: Leverages `nxs_analysis_tools.chess.TempDependence` and `TempDict` for automated temperature discovery, batch operations across full $T$-series (batch Scissors), waterfall linecut plots, $(Q, T)$ heatmaps, multi-$T$ peak fitting, and order parameter curves. Includes CLI scripts in `scripts/`. |
 | **`xtec-gpu-analysis`** | [`xtec-gpu-analysis/`](./xtec-gpu-analysis/) | **GPU Temperature Clustering (XTEC-GPU)**: High-throughput clustering of temperature-series scattering datasets using PyTorch and `torchgmm`. Features automated 4D NeXus compilation from 3D volumes (NXRefine and legacy CHESS) via `TempDependence.to_xtec()`, enforces cluster node etiquette (interactive CPU nodes via `qrsh` vs Grid Engine GPU queue `qsub -l cuda_free=1`), autonomous model selection ($k^* = \operatorname{argmin}_k \text{BIC}$), mandatory streamed preprocessing (`--streamed-preprocess`) for large volumes (>24 GB), discrete Q-map visualization, and automated Markdown reporting. Includes turnkey input generation CLI in `scripts/`. |
 
 ---
@@ -214,6 +218,25 @@ chess-qm2-ai-skills/
 │   ├── SKILL.md
 │   └── references/
 │       └── cluster_execution.md
+├── reciprocal-space-plotting/
+│   ├── SKILL.md
+│   └── scripts/
+│       ├── plot_slice.py
+│       └── plot_summary.py
+├── reciprocal-space-animation/
+│   ├── SKILL.md
+│   └── scripts/
+│       ├── animate_volume.py
+│       └── animate_temp_series.py
+├── reciprocal-space-linecuts/
+│   ├── SKILL.md
+│   └── scripts/
+│       └── extract_linecut.py
+├── temperature-series-analysis/
+│   ├── SKILL.md
+│   └── scripts/
+│       ├── batch_temp_linecuts.py
+│       └── temp_order_parameter.py
 └── xtec-gpu-analysis/
     ├── SKILL.md
     ├── scripts/

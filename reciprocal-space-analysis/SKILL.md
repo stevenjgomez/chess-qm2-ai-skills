@@ -1,15 +1,15 @@
 ---
 name: reciprocal-space-analysis
 description: >-
-  Analyze, reconstruct, index, align, and compare 3D reciprocal space X-ray
-  and neutron diffraction datasets (NeXus/HDF5) using nxs_analysis_tools.
-  Use when processing synchrotron reciprocal space volumes, performing hexagonal
-  or non-orthogonal lattice transformations, overlaying reflections under skew
-  projections, comparing multi-dataset linecuts and animations, or executing
-  heavy data pipelines on remote compute clusters.
+  Master guide for analyzing, indexing, transforming, and comparing 3D reciprocal
+  space X-ray and neutron diffraction datasets (NeXus/HDF5) using nxs_analysis_tools.
+  Covers coordinate frames, lazy hyperslab slicing, non-orthogonal lattice skew,
+  and cluster execution. Delegates specialized tasks to modular sister skills:
+  reciprocal-space-plotting (2D slices), reciprocal-space-animation (GIF/MP4 scans),
+  reciprocal-space-linecuts (1D Scissors cuts), and temperature-series-analysis (TempDependence).
 ---
 
-# 3D Reciprocal Space Analysis & Visualization Skill
+# 3D Reciprocal Space Analysis Master Skill (`reciprocal-space-analysis`)
 
 This skill provides comprehensive guidelines, mathematical formulas, and operational best practices for analyzing, indexing, comparing, and visualizing 3D reciprocal space diffraction datasets (e.g., from CHESS ID4B/QM2 beamlines or similar synchrotron/neutron facilities) using `nxs_analysis_tools`.
 
@@ -192,10 +192,26 @@ All 2D reciprocal space slice plots must include default grid lines and integer 
 
 ---
 
-## 4. Beamline Lifecycle Integration & Sister Skills
+## 4. Modular Reciprocal Space Skills Ecosystem
 
-$$\text{Raw CBFs} \xrightarrow{\text{chess-legacy-reduction}} \text{3D Volumes} \xrightarrow{\text{reciprocal-space-analysis}} \text{Diagnostic Slicing} \xrightarrow{\text{xtec-gpu-analysis}} \text{4D Phase Clustering}$$
+```mermaid
+flowchart LR
+    RAW["Raw CBFs"] --> RED["chess-legacy-reduction\n(Zero-stack streaming)"]
+    RED --> VOL["3D Volumes\n(3rot_hkli_lite.nxs)"]
+    VOL --> MASTER["reciprocal-space-analysis\n(Master Guide)"]
+    
+    MASTER --> PLOT["reciprocal-space-plotting\n(2D Slices & 3-Panel)"]
+    MASTER --> ANIM["reciprocal-space-animation\n(GIF/MP4 Scans)"]
+    MASTER --> CUTS["reciprocal-space-linecuts\n(1D Scissors Cuts)"]
+    MASTER --> TEMP["temperature-series-analysis\n(TempDependence Batch Ops)"]
+    
+    TEMP --> XTEC["xtec-gpu-analysis\n(4D GPU Clustering)"]
+```
 
-- **Upstream Data Reduction**: For converting raw Pilatus CBF detector frames into 3D NeXus reciprocal space volumes (`1rot_hkli.nxs`, `3rot_hkli.nxs`), consult the [`chess-legacy-reduction`](../chess-legacy-reduction/SKILL.md) skill.
-- **Downstream Phase Clustering**: For clustering temperature-series reciprocal space datasets with GPU acceleration (PyTorch / `torchgmm`), consult the [`xtec-gpu-analysis`](../xtec-gpu-analysis/SKILL.md) skill.
-- **Cluster Execution Details**: See the [Cluster Execution Guide](./references/cluster_execution.md) for interactive `qrsh` sessions, headless matplotlib, and memory management.
+- **2D Slice Visualization & Publication Figures**: For generating 2D cross-sections (HK, HL, KL), 3-panel summary plots, physical aspect ratio ($b^*/a^*$) corrections, and crystallographic skew grids, consult [`reciprocal-space-plotting`](../reciprocal-space-plotting/SKILL.md).
+- **Volumetric & Thermal Animations**: For exporting scrolling axis scans ($L$-scans) or temperature series evolution into GIF or MP4 media, consult [`reciprocal-space-animation`](../reciprocal-space-animation/SKILL.md).
+- **1D Peak Cuts & Scissors Extraction**: For single-volume linecuts, transverse integration windows, and peak integration, consult [`reciprocal-space-linecuts`](../reciprocal-space-linecuts/SKILL.md).
+- **Multi-Temperature Series & TempDependence**: For batch operations across entire temperature series at once (batch Scissors, waterfall plots, $(Q, T)$ heatmaps, order parameter fitting), consult [`temperature-series-analysis`](../temperature-series-analysis/SKILL.md).
+- **Upstream Data Reduction & Streaming**: For converting raw Pilatus CBF detector sweeps into 3D reciprocal space NeXus volumes, consult [`chess-legacy-reduction`](../chess-legacy-reduction/SKILL.md).
+- **Downstream Phase Clustering**: For clustering temperature-series reciprocal space datasets with GPU acceleration (PyTorch / `torchgmm`), consult [`xtec-gpu-analysis`](../xtec-gpu-analysis/SKILL.md).
+
