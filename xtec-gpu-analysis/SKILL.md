@@ -39,6 +39,22 @@ flowchart LR
 
 Per [`GEMINI.md`](../GEMINI.md), all remote Python and Conda environments on CLASSE are **strictly read-only / immutable**. Never run `pip install` or modify environment configurations.
 
+### 1.0 First-Use SSH Access Check (Mandatory Pre-Flight)
+Before the first remote clustering task or compilation on CLASSE, establish the user's username and login host (`lnx201.classe.cornell.edu`). Test an existing connection with `BatchMode=yes` and a short connection timeout:
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=15 <username>@lnx201.classe.cornell.edu 'echo CHESS_SSH_OK'
+```
+*(On Windows PowerShell: `ssh -o BatchMode=yes -o ConnectTimeout=15 "${classeUser}@lnx201.classe.cornell.edu" 'echo CHESS_SSH_OK'`)*.
+
+If unattended authentication fails:
+1. Explain that a password or Duo login in a separate terminal will **not** automatically authenticate later commands run by the agent or background subprocesses.
+2. Offer to set up a dedicated local Ed25519 SSH key (`~/.ssh/id_ed25519_classe`), or use another authentication method approved by the facility. Consult the [SSH First-Time Setup & Non-Interactive Access Guide](references/ssh-first-use.md) before creating a key or installing its public half.
+3. Obtain the user's choice of passphrase protection. Prefer an existing, supported SSH agent for a protected key; use a key without a passphrase only when the user explicitly chooses that option. Reuse suitable existing keys and configuration rather than overwriting them.
+4. Keep the private key on the user's computer. Install only the public key on the user's remote account, preserving all existing authorized-key entries. Have the user enter any password or second factor directly in an interactive terminal, rather than in chat or a script. (For Windows users, use the safe Base64-encoded installation script in the guide to avoid PowerShell quoting bugs and CRLF line ending corruption).
+5. Complete setup only after a fresh `BatchMode=yes` connection succeeds and returns `CHESS_SSH_OK`. Key creation, an installation-success message, or a working interactive login alone is insufficient.
+6. Once access is verified, resume the user's scientific task immediately. SSH authentication does not replace compute-node allocation rules or any required job-submission approval.
+
+### 1.1 Node Classes & Permitted Execution
 Always strictly distinguish between the machine classes on CLASSE:
 
 | Node Role | Host / Queue | Purpose & Hardware | Execution Rule |
@@ -122,7 +138,7 @@ When a user commands **"Run XTEC on {sample}"**, execute the following lifecycle
   [Phase 4: Visualization & Reporting]
   ├── Discrete Reciprocal-Space Q-Map (tab10/tab20, pure white unclustered, r.l.u. axes)
   ├── Trajectory & Mean Intensity Plots (synchronized palette, legend outside)
-  └── Comprehensive Markdown Report (report.md with absolute image links)
+  └── Comprehensive Markdown Report (report.md with relative image links)
 ```
 
 ### Automated Model Selection & GPU Batch Execution (`qsub -l cuda_free=1`)
@@ -174,7 +190,7 @@ When a user commands **"Run XTEC on {sample}"**, execute the following lifecycle
    - **Palette Synchronization**: Exactly match the discrete colors used in the Q-map.
    - **Legend Positioning**: Place legends outside the plot area (`bbox_to_anchor=(1.02, 1), loc="upper left"`) so curves are never obscured.
 3. **Automated Markdown Reporting (`report.md`)**:
-   - **Absolute Image Paths**: Always use absolute paths (e.g. `![Q-map](/path/to/results/qmap.png)`) because reports symlinked at workspace roots break when using relative paths.
+   - **Relative Image Paths**: Always use relative filepaths (e.g. `![Q-map](./qmap.png)` or `![Figure](figures/plot.png)`) per global Markdown standards; never use absolute paths.
    - **Cross-Referenced Tables**: Map 1-indexed plot labels (`Cluster 1` to `Cluster K`) to 0-indexed HDF5 datasets in `results.h5`.
 
 ---

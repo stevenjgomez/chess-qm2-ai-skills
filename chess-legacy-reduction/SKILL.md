@@ -1,17 +1,15 @@
 ---
 name: chess-legacy-reduction
 description: >-
-  Automate the legacy CHESS ID4B/QM2 beamline data reduction and indexing pipeline.
-  Covers raw Pilatus CBF frame stacking, headless orientation matrix (ORM) solving
-  with basinhopping, 3D reciprocal space HKL conversion (1rot and 3rot, also referred
-  to as "indexing the data"), cross-sectional projection visualization (HK, HL, KL planes),
-  human-in-the-loop verification, and Grid Engine (qsub) batch reduction across AVX2-capable
-  CLASSE nodes (lnx307, lnx311, lnx312, lnx313). Use this skill when the user asks to reduce
-  raw Pilatus CBF frames, stack scans, solve orientation matrices, index diffraction data,
-  or run 1rot/3rot reciprocal conversions on CLASSE.
+  Automate CHESS ID4B/QM2 beamline reciprocal space data reduction and indexing.
+  Features the primary Zero-Stack Streaming Engine (stream_hkl.py) across 3 tiers:
+  Tier 0 (Litest 1-rot, <5 min), Tier 1 (Lite 3-rot, ~13.7 min), and Tier 2 (Full Archival),
+  saving 100% of intermediate scratch disk. Covers headless orientation solving (basinhopping
+  and DIALS), O(1) arithmetic reciprocal binning (libhkl.so), cross-sectional diagnostic
+  slicing (HK, HL, KL), human-in-the-loop verification, and legacy monolithic stacking fallback.
 ---
 
-# CHESS Legacy Data Reduction Pipeline Skill
+# CHESS Reciprocal Space Reduction & Streaming Pipeline Skill (`chess-legacy-reduction`)
 
 This skill defines the operational standards, path conventions, cluster etiquette, and execution procedures for automating the legacy "CHESS" data reduction workflow for the QM2 beamline.
 
@@ -19,6 +17,22 @@ This skill defines the operational standards, path conventions, cluster etiquett
 
 ## 1. Remote Compute Etiquette & Python Environment
 
+### 1.0 First-Use SSH Access Check (Mandatory Pre-Flight)
+Before the first remote reduction task, establish the user's CLASSE username and login host (`lnx201.classe.cornell.edu`). Test an existing connection with `BatchMode=yes` and a short connection timeout:
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=15 <username>@lnx201.classe.cornell.edu 'echo CHESS_SSH_OK'
+```
+*(On Windows PowerShell: `ssh -o BatchMode=yes -o ConnectTimeout=15 "${classeUser}@lnx201.classe.cornell.edu" 'echo CHESS_SSH_OK'`)*.
+
+If unattended authentication fails:
+1. Explain that a password or Duo login in a separate terminal will **not** automatically authenticate later commands run by the agent or background subprocesses.
+2. Offer to set up a dedicated local Ed25519 SSH key (`~/.ssh/id_ed25519_classe`), or use another authentication method approved by the facility. Consult the [SSH First-Time Setup & Non-Interactive Access Guide](references/ssh-first-use.md) before creating a key or installing its public half.
+3. Obtain the user's choice of passphrase protection. Prefer an existing, supported SSH agent for a protected key; use a key without a passphrase only when the user explicitly chooses that option. Reuse suitable existing keys and configuration rather than overwriting them.
+4. Keep the private key on the user's computer. Install only the public key on the user's remote account, preserving all existing authorized-key entries. Have the user enter any password or second factor directly in an interactive terminal, rather than in chat or a script. (For Windows users, use the safe Base64-encoded installation script in the guide to avoid PowerShell quoting bugs and CRLF line ending corruption).
+5. Complete setup only after a fresh `BatchMode=yes` connection succeeds and returns `CHESS_SSH_OK`. Key creation, an installation-success message, or a working interactive login alone is insufficient.
+6. Once access is verified, resume the user's scientific task immediately. SSH authentication does not replace compute-node allocation rules or any required job-submission approval.
+
+### 1.1 Execution Protocols & Cluster Etiquette
 1. **Execution Architecture: Batch Reduction (`qsub`) vs. Interactive Sessions (`qrsh`)**:
    - **Data Reduction Pipeline (Mandatory `qsub` via Bash Wrappers)**: All heavy reduction tasks (Pilatus raw CBF stacking into `stack*.nxs`, headless ORM solving with basinhopping, and 1rot/3rot reciprocal space conversions) **MUST be submitted as Grid Engine `qsub` jobs**:
      ```bash
@@ -125,6 +139,14 @@ Standard path patterns at CHESS ID4B:
 
 ## 3. Human-in-the-Loop Clarification Rules
 
+### 3.0 Sample Mount Independence: Different Samples Do NOT Share Orientations
+> [!CAUTION]
+> **Orientation Matrices Are Unique to Each Sample Mount!**
+> Different physical sample pins or mounts (e.g. `sample1A` vs `sample3`) do **NOT** share crystal orientations.
+> - While a single mounted crystal maintains its orientation across temperature sweeps (e.g. 110 K to 300 K), moving to a new sample mount requires its own solved orientation matrix.
+> - **Never copy or reuse an orientation matrix from a different sample** (e.g. do not apply `sample1A`'s matrix to `sample3`).
+> - If the specific sample has already been oriented in `nxrefine/` (e.g. in `nxrefine/{material}/{sample_id}/300/f1_transform.pars`), you may convert and ingest that matrix for the same sample. Otherwise, solve a fresh matrix on the target sample.
+
 ### 3.1 Ambiguous Calibration (.poni) and Mask (.edf) Files
 - **Modes**: Two experimental geometries exist:
   - **`transmission`**: Bulk samples in transmission (e.g. `ceO2_15keV_trans.poni`, `mask_trans.edf`).
@@ -164,61 +186,87 @@ Standard path patterns at CHESS ID4B:
 
 ---
 
-## 4. Standard Reduction Workflow
+## 4. Reduction Workflow Architecture: Streaming vs Legacy
 
-### Phase 1: Warmest Temperature Single-Rotation Fast Path
-1. **Identify Warmest Temperature**: Sort temperature folders numerically and select the maximum $T$ (e.g., $281\text{ K}$).
-2. **Stack Rotation 1 Only**: Run `stack_em_all.py` on the first scan folder of the warmest temperature to produce `stack1.nxs`.
-3. **Headless ORM Solving**: Run the headless orientation solver (`orm_solver.py`):
-   - Adaptive peak finding between bounds (`valmin`, `lower_bound`, `upper_bound`):
-     - **Default Threshold Adjustment (`--threshold-method increment`)**: Linear stepping (`-= 0.1` decrement if below lower bound, `+= 0.02` increment if above upper bound, `-= 0.01` fine-tuning) preserved as the standard default behavior.
-     - **Bifurcation / Bisection Search (`--bisection` or `--threshold-method bisection`)**: Flagged option that activates geometric interval halving, converging on the target peak count in $\le 10$ steps without oscillation.
-     - **Spatial Local Maxima Filtering (`--use-local-max`)**: Flagged option to detect distinct 3D reflection centroids via frame-by-frame 2D local maxima filtering and 3D non-maximum suppression.
-     - **Seeded Basinhopping (`--init-euler "e0,e1,e2"`)**: Seeds optimization from a known orientation guess rather than origin.
-   - Euler angle optimization via `scipy.optimize.basinhopping` and `hkl.Calc_HKL`.
-   - > [!NOTE]
-   - > **Runtime Expectation**: ORM solving involves multi-stage non-linear basinhopping with local BFGS iterations over dozens of reflections and can take **from tens of minutes up to several hours**. Submitting as a batch job via `qsub` is strictly required to decouple from local client uptime.
-   - Export `ormatrix_auto.nxs`, `peaklist1.npy`, and `ormfinder.log`.
-4. **1-Rotation HKL Conversion**: Execute `Pil6M_HKLConv_3D_2022_1rot.py` to produce `1rot_hkli.nxs`.
-5. **Cross-Sectional Visualization**: Slice the 3D volume lazily using `slice_visualizer.py` with `nxs_analysis_tools.plot_slice()` under `/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/` with physical reciprocal lattice aspect ratio calibration and mandatory grid/tick formatting:
-   - $(HK0)$: Central cut along $L$, sheared by dynamic crystallographic skew angle $\gamma^*$ (e.g. `skew_angle=60°` for hexagonal lattices) and aspect-scaled by $b^*/a^* \times \text{ax.get\_aspect()}$.
-   - $(H0L)$: Central cut along $K$, with skew angle $\beta^*$ and aspect-scaled by $c^*/a^* \times \text{ax.get\_aspect()}$ (eliminates artificial vertical stretching along $L$).
-   - $(0KL)$: Central cut along $H$, with skew angle $\alpha^*$ and aspect-scaled by $c^*/b^* \times \text{ax.get\_aspect()}$.
-   - **Default Gridlines & Integer Tick Standards (Mandatory for All Cases)**:
-     - **Skew-Aligned Grid Lines**: Grid lines are rendered via `LineCollection` transformed by `quadmesh.get_transform()` so that lines of constant reciprocal lattice coordinates strictly reflect the crystallographic `skew_angle` (e.g. $60^\circ$ for hexagonal $HK$, orthogonal for $HL/KL$).
-     - **Major Ticks on Integers**: Major tick locators are strictly placed on integer multiples (using `MultipleLocator(2)` for spans $>8$, or `MultipleLocator(1)`).
-     - **Minor Ticks on Every Integer**: Minor tick marks are mandatory on every integer (`MultipleLocator(1)`).
-   Save as `slice_HK.png`, `slice_HL.png`, `slice_KL.png`, and `slices_summary.png`.
-6. **User Verification Gate**: Present cross-sectional slice figures to the user. **Wait for user confirmation** before proceeding.
-   Record confirmation into `pipeline_status.json`:
-   ```bash
-   python scripts/pipeline_tracker.py /nfs/chess/id4baux/{cycle}/{experiment}/processed_old_way/{sample}/{sample_id} --verify-orm
-   ```
+### 4.1 Primary Production Engine: Zero-Stack Streaming (`stream_hkl.py`)
 
-### Phase 2: Full Distributed Batch Reduction (3rot_hkli Generation)
-Upon user approval of the orientation matrix / instruction to generate full reconstructions:
-1. **Immediate Priority on Compute Stacks (No Plotting Sidetracks)**:
-   - Generating `3rot_hkli.nxs` requires exactly 3 stacks (`stack1.nxs`, `stack2.nxs`, `stack3.nxs`).
-   - If 3 rotation scans are available in the raw directory, the agent **must immediately identify missing stacks** (`stack2.nxs`, `stack3.nxs`) and prepare the batch execution script to stack them via `stack_em_all.py` followed by `Pil6M_HKLConv_3D_2022_3rot.py`.
-   - **Prohibition on Pre-emptive Tool Tweaking**: Never pause, investigate, or modify downstream plotting scripts (such as `slice_visualizer.py`) before heavy stacking and conversion jobs are submitted. Data reduction compute takes hours and must be dispatched first.
-2. **Scan Count Logic**:
-   - If **3 rotation scans** exist in the raw directory: Generate `3rot_hkli.nxs` (stacking missing scans 2 and 3 first).
-   - If only **1 rotation scan** exists: Generate only `1rot_hkli.nxs`.
-3. **Execution Script Pattern**:
-   Prepare and present the SGE batch script via the Show-Before-Submit gate:
-   - Step 0A: `stack_em_all.py` on scan 2 $\rightarrow$ `stack2.nxs`
-   - Step 0B: `stack_em_all.py` on scan 3 $\rightarrow$ `stack3.nxs`
-   - Step 1: `Pil6M_HKLConv_3D_2022_3rot.py` with verified unit cell / supercell bounds $\rightarrow$ `3rot_hkli.nxs`
-   - Step 2: `slice_visualizer.py` on `3rot_hkli.nxs`
-4. Submit batch reduction job script via `qsub`:
-   ```bash
-   qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' -l mem_free=200G -pe sge_pe 32 scripts/legacy-reduction-{sample_id}-batch.sh
-   ```
-5. **Targeted Monitoring**: Schedule a one-shot wakeup timer strictly based on the calculated predicted finish time ($\Delta t_{\text{est}}$) rather than arbitrary intervals (see Section 1.9). Avoid premature wakeups.
+The **Zero-Stack Streaming Engine** directly converts raw Pilatus CBF frames into 3D NeXus reciprocal space volumes without writing intermediate monolithic disk stacks (`stack*.nxs`).
+
+```mermaid
+flowchart LR
+    RAW["Raw CBFs (65 GB)\nScans 5, 6, 7"] --> STREAM["stream_hkl.py\n(O(1) libhkl.so kernel)"]
+    SPEC["SPEC Angles & IC"] --> STREAM
+    ORM["Solved ORM\n(ormatrix_auto.nxs)"] --> STREAM
+    CAL["pyFAI PONI & Mask"] --> STREAM
+    
+    STREAM --> T0["Tier 0: Litest (<5 min, 10 MB)\n1-Rot, Stride 2, Step 0.05"]
+    STREAM --> T1["Tier 1: Lite (~13.7 min, 10.5 MB)\n3-Rot, Stride 2, Step 0.05 [DEFAULT]"]
+    STREAM --> T2["Tier 2: Archival (~35 min, 25 GB)\n3-Rot, Stride 1, Step 0.01"]
+    
+    T0 --> DIAG["Fast Diagnostic Slicing\n(reciprocal-space-plotting)"]
+    T1 --> DIAG
+```
+
+#### The Three Workflow Tiers
+1. **Tier 0: "Litest" Mode (1 Rotation, Scan 5 only)**:
+   - **Command**:
+     ```bash
+     python chess-legacy-reduction/scripts/stream_hkl.py \
+       --raw-scans /path/to/raw6M/.../Scan1/ \
+       --spec-file /path/to/spec \
+       --scan-nums 5 \
+       --poni calibrations/CeO2.poni \
+       --mask calibrations/mask.edf \
+       --orm processed_old_way/.../ormatrix_auto.nxs \
+       --hstep 0.05 --kstep 0.05 --lstep 0.05 \
+       --stride 2 \
+       --output-nxs processed_old_way/.../1rot_hkli_lite.nxs
+     ```
+   - **Performance**: Converts 1,826 frames in **$292\text{ seconds}$ ($4.87\text{ minutes}$)** at **$6.3\text{ fps}$**. Output size: **$10.5\text{ MB}$** (52 MB RAM).
+   - **Purpose**: Instant verification while the crystal is still in the beam.
+
+2. **Tier 1: "Lite Fast-Path" Mode (3 Rotations, Stride 2) [RECOMMENDED DEFAULT]**:
+   - **Command**:
+     ```bash
+     python chess-legacy-reduction/scripts/stream_hkl.py \
+       --raw-scans /path/to/Scan1/ /path/to/Scan2/ /path/to/Scan3/ \
+       --spec-file /path/to/spec \
+       --scan-nums 5 6 7 \
+       --poni calibrations/CeO2.poni \
+       --mask calibrations/mask.edf \
+       --orm processed_old_way/.../ormatrix_auto.nxs \
+       --hstep 0.05 --kstep 0.05 --lstep 0.05 \
+       --stride 2 \
+       --output-nxs processed_old_way/.../3rot_hkli_lite.nxs
+     ```
+   - **Performance**: Converts 5,478 frames across 3 rotations in **$825\text{ seconds}$ ($13.75\text{ minutes}$)**. Output size: **$10.5\text{ MB}$**.
+   - **Purpose**: Full 4-quadrant reciprocal space with zero blind spots, ready for initial inspection and publication draft figures.
+
+3. **Tier 2: "Full Archival" Mode (3 Rotations, Stride 1, Step 0.01)**:
+   - Converts all 10,953 frames into fine $0.01\text{ r.l.u.}$ grid ($6.41\times 10^9$ voxels, $25.6\text{ GB}$).
+   - Run only for archival refinement or fine diffuse peak profiles.
+
+#### Core Empirical Principles of Streaming Reduction
+- **$O(1)$ Arithmetic Indexing**: The C kernel `libhkl.so` directly maps momentum vectors to histogram indices via `(int)((H - hmin) * inv_dh)` taking $\sim 3\text{ ns}$ per pixel. Coordinate binning is never the bottleneck.
+- **NFS Frame Decompression Bottleneck**: Streaming throughput is strictly throttled by reading and decompressing 6 MB raw CBFs over NFS ($\sim 6.2\text{ fps}$).
+- **Why Truncating HKL Range Does NOT Save Streaming Time**:
+  - Restricting bounds (e.g. $H \ge 0, L \ge 0$) only skips histogram bin additions, running at the exact same $6.2\text{ fps}$.
+  - **Rule**: Always compute the **full symmetric range** for Lite workflows ($H \in [-10, 10], K \in [-10, 10], L \in [-8, 8]$).
+- **Where Coarsening Step Size Saves Enormous Time**:
+  - Step $0.05\text{ r.l.u.}$ creates a $10.5\text{ MB}$ volume that writes in $<3\text{ s}$ and slices in $<1\text{ s}$.
+  - Step $0.01\text{ r.l.u.}$ creates a $25.6\text{ GB}$ volume that takes $10–15\text{ minutes}$ just to write over NFS and consumes $51\text{ GB}$ RAM.
+- **Zero Scratch Disk Usage**: Reclaims $100\%$ of scratch disk space ($0\text{ bytes}$ scratch vs $>150\text{ GB}$ for legacy stacking).
 
 ---
 
-## 5. Sample Audit Log & Downstream Analysis Handoff
+### 4.2 Legacy Disk Stacking Fallback Pipeline
+
+For environments where streaming is not deployed or monolithic disk stacks are explicitly required:
+1. **Stack Scans**: `stack_em_all.py` or `fast_stacker.py` $\rightarrow$ `stack1.nxs`, `stack2.nxs`, `stack3.nxs` (18–35 GB each).
+2. **Solve Orientation**: `orm_solver.py` via basinhopping on `stack1.nxs` $\rightarrow$ `ormatrix_auto.nxs`.
+3. **Convert Volumes**: `Pil6M_HKLConv_3D_2022_1rot.py` $\rightarrow$ `1rot_hkli.nxs` or `3rot.py` $\rightarrow$ `3rot_hkli.nxs`.
+4. **Clean Scratch**: Once converted, delete monolithic `stack*.nxs` files to reclaim disk space.
+
 
 - **Audit Log (`pipeline_status.json`)**: Persistent JSON ledger tracking configuration, temperature status, timestamps, and ORM verification state. Inspect via:
   ```bash

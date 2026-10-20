@@ -48,11 +48,15 @@ Inside the SGE script (`xtec_job.sh`):
 /nfs/chess/sw/qm2_XTEC312/bin/xtec-gpu xtec-d /path/to/data.nxs -o /path/to/results/ --min-k 2 --max-k 14
 ```
 
-### SSH Remote Access & Non-Interactive Authentication
+### SSH Remote Access & Non-Interactive Authentication (First-Use Check)
 To enable AI assistant tools and automated workflows to connect to `lnx201` without stalling on password or Duo 2FA prompts:
-- Configure an Ed25519 key pair with macOS Keychain (`UseKeychain yes`) or `ssh-agent`.
-- Alternatively, configure SSH Connection Multiplexing (`ControlMaster`) or Kerberos ticket delegation (`kinit`).
-- See the [SSH Authentication Setup Guide](../../README.md#ssh-remote-access--authentication-setup-suggested-approach) in the repository root for step-by-step instructions.
+- **Mandatory Pre-Flight Probe**: Before executing remote tasks, test existing unattended access:
+  ```bash
+  ssh -o BatchMode=yes -o ConnectTimeout=15 <username>@lnx201.classe.cornell.edu 'echo CHESS_SSH_OK'
+  ```
+- If unattended authentication fails, **do not prompt the user to log in in a separate terminal** (as one-shot terminal logins do not authenticate subsequent background/agent processes).
+- Guide the user through setting up a dedicated Ed25519 key pair with agent/keychain or connection multiplexing.
+- For complete platform-specific workflows (including Windows PowerShell with safe Base64 key installation, macOS Keychain, and Linux), consult the [SSH First-Time Setup & Non-Interactive Access Guide](ssh-first-use.md).
 
 ---
 

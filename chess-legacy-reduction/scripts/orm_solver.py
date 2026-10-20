@@ -63,13 +63,83 @@ def parse_cif(cif_path):
     return values['a'], values['b'], values['c'], values['alpha'], values['beta'], values['gamma']
 
 
+def parse_unitcell_json(json_path):
+    """
+    Parse unit cell parameters from CHESS sample metadata JSON (e.g. FeGeSb.json, SiC.json)
+    or general JSON file.
+    """
+    import json
+    import re
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected top-level JSON object in {json_path}")
+
+    # 1. Check standard CHESS sample metadata field: sample_unit_cell
+    # e.g. "a=5.0027, b=5.0027, c=4.0548, alpha=90, beta=90, gamma=120"
+    for key in ("sample_unit_cell", "unit_cell", "unitcell", "lattice_parameters", "cell"):
+        if key in data:
+            val = data[key]
+            if isinstance(val, str):
+                patterns = {
+                    "a": r"\ba\s*=\s*([\d\.]+)",
+                    "b": r"\bb\s*=\s*([\d\.]+)",
+                    "c": r"\bc\s*=\s*([\d\.]+)",
+                    "alpha": r"\b(?:alpha|al)\s*=\s*([\d\.]+)",
+                    "beta": r"\b(?:beta|be)\s*=\s*([\d\.]+)",
+                    "gamma": r"\b(?:gamma|ga)\s*=\s*([\d\.]+)",
+                }
+                vals = {}
+                for k, pat in patterns.items():
+                    m = re.search(pat, val, re.IGNORECASE)
+                    if m:
+                        vals[k] = float(m.group(1))
+                if len(vals) == 6:
+                    return vals["a"], vals["b"], vals["c"], vals["alpha"], vals["beta"], vals["gamma"]
+
+                parts = [float(x.strip()) for x in val.replace(",", " ").split() if x.strip()]
+                if len(parts) == 6:
+                    return parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+            elif isinstance(val, (list, tuple)) and len(val) == 6:
+                return float(val[0]), float(val[1]), float(val[2]), float(val[3]), float(val[4]), float(val[5])
+            elif isinstance(val, dict):
+                keys = {k.lower(): k for k in val.keys()}
+                if all(k in keys for k in ("a", "b", "c", "alpha", "beta", "gamma")):
+                    return (
+                        float(val[keys["a"]]),
+                        float(val[keys["b"]]),
+                        float(val[keys["c"]]),
+                        float(val[keys["alpha"]]),
+                        float(val[keys["beta"]]),
+                        float(val[keys["gamma"]]),
+                    )
+
+    # 2. Check top-level keys
+    keys = {k.lower(): k for k in data.keys()}
+    if all(k in keys for k in ("a", "b", "c", "alpha", "beta", "gamma")):
+        return (
+            float(data[keys["a"]]),
+            float(data[keys["b"]]),
+            float(data[keys["c"]]),
+            float(data[keys["alpha"]]),
+            float(data[keys["beta"]]),
+            float(data[keys["gamma"]]),
+        )
+
+    raise ValueError(f"Could not find valid unit cell parameters in JSON file: {json_path}")
+
+
 def load_unitcell(unitcell_source):
     """
-    Parse unit cell parameters (a, b, c, alpha, beta, gamma) from a CIF file, CSV text file,
-    or comma-separated string.
+    Parse unit cell parameters (a, b, c, alpha, beta, gamma) from a sample metadata JSON file,
+    CIF file, CSV text file, or comma-separated string.
     """
     if os.path.isfile(unitcell_source):
-        if unitcell_source.lower().endswith(".cif"):
+        if unitcell_source.lower().endswith(".json"):
+            return parse_unitcell_json(unitcell_source)
+        elif unitcell_source.lower().endswith(".cif"):
             return parse_cif(unitcell_source)
         with open(unitcell_source, "r") as f:
             for line in f:
@@ -490,9 +560,10 @@ def main():
     parser = argparse.ArgumentParser(description="Headless Orientation Matrix Finder")
     parser.add_argument("--projectdir", required=True, help="Processed temperature directory (where stack1.nxs is located)")
     parser.add_argument("--unitcell", required=True, help="Unit cell CSV file or 'a,b,c,alpha,beta,gamma'")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     parser.add_argument("--codebase",
-                        default=os.environ.get("CHESS_LEGACY_CODEBASE", os.path.expanduser("~/chess_legacy_codebase")),
-                        help="Path to legacy codebase containing hkl.py and libhkl.so (default: $CHESS_LEGACY_CODEBASE or ~/chess_legacy_codebase)")
+                        default=os.environ.get("CHESS_LEGACY_CODEBASE", script_dir),
+                        help="Path to legacy codebase containing hkl.py and libhkl.so (default: $CHESS_LEGACY_CODEBASE or local script directory)")
     parser.add_argument("--valmin", type=float, default=0.9, help="Initial minimum intensity fraction")
     parser.add_argument("--valmax", type=float, default=1.0, help="Maximum intensity fraction")
     parser.add_argument("--lower-bound", type=int, default=50, help="Minimum acceptable number of peaks")

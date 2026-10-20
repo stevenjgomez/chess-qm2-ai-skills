@@ -22,6 +22,8 @@ __pycache__/
 *.bak
 *~
 review.md
+.manifest.json
+.manifest.lock
 
 # Operating System & Editor files
 .DS_Store

@@ -39,50 +39,95 @@ Once installed, Antigravity automatically discovers and progressively mounts eac
 
 ---
 
-## SSH Remote Access & Authentication Setup (Suggested Approach)
+## SSH Remote Access & Authentication Setup (First-Time Use)
 
-To allow automated assistant tools, job monitoring (`qstat`), and remote analysis commands to run non-interactively without stalling on password or two-factor authentication prompts, configure SSH access from your local machine to the CLASSE login gateway (`lnx201.classe.cornell.edu`).
+To allow automated assistant tools (Antigravity, Codex, Gemini CLI), job monitoring (`qstat`), and remote analysis pipelines to run non-interactively without stalling on password or two-factor authentication prompts, configure unattended SSH access from your local machine to the CLASSE login gateway (`lnx201.classe.cornell.edu`).
 
-Different users and institutions maintain different security policies and authentication pathways. Below is the **recommended approach**, followed by alternative pathways.
+> [!IMPORTANT]
+> **Complete Guide Available**:
+> For the comprehensive, step-by-step cross-platform reference (including safe Base64 key installation on Windows, macOS Keychain, Linux agents, and troubleshooting decisions), see:
+> **[`references/ssh-first-use.md`](./references/ssh-first-use.md)**.
+
+> [!WARNING]
+> **The "Interactive Terminal Trap": Why Logging In Separately Does Not Work**
+> One-shot password or keyboard-interactive Duo logins in an independent terminal **do not authenticate background commands executed by an AI agent or automated script**. Each new `ssh` command launches in its own subprocess and requires non-interactive authentication (SSH key or `ControlMaster`).
+
+### Pre-Flight Probe: Check Existing Access
+Before generating new keys or altering configurations, verify if unattended access already works:
+```bash
+# macOS / Linux
+ssh -o BatchMode=yes -o ConnectTimeout=15 <username>@lnx201.classe.cornell.edu 'echo CHESS_SSH_OK'
+```
+```powershell
+# Windows (PowerShell)
+ssh -o BatchMode=yes -o ConnectTimeout=15 "YOUR_USER@lnx201.classe.cornell.edu" 'echo CHESS_SSH_OK'
+```
+If the command outputs `CHESS_SSH_OK` with exit code 0, access is verified!
 
 ### Recommended Pathway: Ed25519 Key Pair with Keychain / Agent
 
-1. **Generate a dedicated SSH key pair** (on your local machine):
-   ```bash
-   ssh-keygen -t ed25519 -C "<user>@classe" -f ~/.ssh/id_ed25519_classe
+#### On Windows (PowerShell)
+Windows lacks `ssh-copy-id` and native quoting can corrupt remote shell strings.
+1. **Generate local key**:
+   ```powershell
+   ssh-keygen -t ed25519 -a 100 -f "$env:USERPROFILE\.ssh\id_ed25519_classe" -C "<user>@CLASSE"
    ```
-   *(Setting a passphrase on the private key is strongly recommended for security).*
+2. **Safely install public key** (without corrupting `authorized_keys`): Use the Base64-encoded installation script provided in [`references/ssh-first-use.md#31-windows-setup-powershell-51--powershell-7`](./references/ssh-first-use.md#31-windows-setup-powershell-51--powershell-7).
+3. **Verify fresh connection**:
+   ```powershell
+   ssh -o BatchMode=yes -o IdentitiesOnly=yes -i "$env:USERPROFILE\.ssh\id_ed25519_classe" "<user>@lnx201.classe.cornell.edu" 'echo CHESS_SSH_OK'
+   ```
 
-2. **Copy the public key to CLASSE**:
+#### On macOS
+1. **Generate local key**:
+   ```bash
+   ssh-keygen -t ed25519 -a 100 -f ~/.ssh/id_ed25519_classe -C "<user>@classe"
+   ```
+2. **Store in Apple Keychain**:
+   ```bash
+   ssh-add --apple-use-keychain ~/.ssh/id_ed25519_classe
+   ```
+3. **Install public key**:
    ```bash
    ssh-copy-id -i ~/.ssh/id_ed25519_classe.pub <username>@lnx201.classe.cornell.edu
    ```
-   *(Authenticate once interactively with your CLASSE password and Duo 2FA).*
-
-3. **Configure `~/.ssh/config` on your local machine**:
+4. **Configure `~/.ssh/config`**:
    ```ssh-config
-   Host lnx201.classe.cornell.edu lnx201
+   Host lnx201.classe.cornell.edu lnx201 classe
      HostName lnx201.classe.cornell.edu
      User <username>
      IdentityFile ~/.ssh/id_ed25519_classe
      IdentitiesOnly yes
      AddKeysToAgent yes
-     UseKeychain yes  # macOS: saves passphrase in Apple Keychain
+     UseKeychain yes
+   ```
+5. **Verify**:
+   ```bash
+   ssh -o BatchMode=yes -o ConnectTimeout=15 lnx201 'echo CHESS_SSH_OK'
    ```
 
-4. **Load the key into your SSH agent / Keychain (one-time)**:
-   - On **macOS**:
-     ```bash
-     ssh-add --apple-use-keychain ~/.ssh/id_ed25519_classe
-     ```
-   - On **Linux**:
-     ```bash
-     ssh-add ~/.ssh/id_ed25519_classe
-     ```
-
-5. **Verify non-interactive login**:
+#### On Linux
+1. **Generate key & add to agent**:
    ```bash
-   ssh lnx201 "echo 'Connected successfully to ' \$(hostname) ' as ' \$(whoami)"
+   ssh-keygen -t ed25519 -a 100 -f ~/.ssh/id_ed25519_classe -C "<user>@classe"
+   eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519_classe
+   ```
+2. **Install public key**:
+   ```bash
+   ssh-copy-id -i ~/.ssh/id_ed25519_classe.pub <username>@lnx201.classe.cornell.edu
+   ```
+3. **Configure `~/.ssh/config`**:
+   ```ssh-config
+   Host lnx201.classe.cornell.edu lnx201 classe
+     HostName lnx201.classe.cornell.edu
+     User <username>
+     IdentityFile ~/.ssh/id_ed25519_classe
+     IdentitiesOnly yes
+     AddKeysToAgent yes
+   ```
+4. **Verify**:
+   ```bash
+   ssh -o BatchMode=yes -o ConnectTimeout=15 lnx201 'echo CHESS_SSH_OK'
    ```
 
 ### Alternative Authentication Pathways

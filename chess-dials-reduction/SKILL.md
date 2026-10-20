@@ -15,6 +15,21 @@ The output of this pipeline is a dual reflection bundle (`for_refinement/`) cont
 
 ## 1. Environment & Remote Compute Etiquette
 
+### 1.0 First-Use SSH Access Check (Mandatory Pre-Flight)
+Before the first remote DIALS reduction task, establish the user's CLASSE username and login host (`lnx201.classe.cornell.edu`). Test an existing connection with `BatchMode=yes` and a short connection timeout:
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=15 <username>@lnx201.classe.cornell.edu 'echo CHESS_SSH_OK'
+```
+*(On Windows PowerShell: `ssh -o BatchMode=yes -o ConnectTimeout=15 "${classeUser}@lnx201.classe.cornell.edu" 'echo CHESS_SSH_OK'`)*.
+
+If unattended authentication fails:
+1. Explain that a password or Duo login in a separate terminal will **not** automatically authenticate later commands run by the agent or background subprocesses.
+2. Offer to set up a dedicated local Ed25519 SSH key (`~/.ssh/id_ed25519_classe`), or use another authentication method approved by the facility. Consult the [SSH First-Time Setup & Non-Interactive Access Guide](references/ssh-first-use.md) before creating a key or installing its public half.
+3. Obtain the user's choice of passphrase protection. Prefer an existing, supported SSH agent for a protected key; use a key without a passphrase only when the user explicitly chooses that option. Reuse suitable existing keys and configuration rather than overwriting them.
+4. Keep the private key on the user's computer. Install only the public key on the user's remote account, preserving all existing authorized-key entries. Have the user enter any password or second factor directly in an interactive terminal, rather than in chat or a script. (For Windows users, use the safe Base64-encoded installation script in the guide to avoid PowerShell quoting bugs and CRLF line ending corruption).
+5. Complete setup only after a fresh `BatchMode=yes` connection succeeds and returns `CHESS_SSH_OK`. Key creation, an installation-success message, or a working interactive login alone is insufficient.
+6. Once access is verified, resume the user's scientific task immediately. SSH authentication does not replace compute-node allocation rules or any required job-submission approval.
+
 ### 1.1 Cluster Etiquette: ZERO Compute on Login Node (`lnx201`)
 > [!CAUTION]
 > **STRICT PROHIBITION ON DATA PROCESSING ON `lnx201` (LOGIN NODE)**
@@ -163,16 +178,22 @@ qsub -q 'all.q@lnx307*,all.q@lnx311*,all.q@lnx312*,all.q@lnx313*' \
    ```bash
    dials.find_spots find_spots.phil imported.expt mask=pixels.mask spotfinder.filter.d_min=0.75 mp.nproc=24
    ```
-4. **Unconstrained Auto-Indexing**:
-   > [!TIP]
-   > **Do Not Constrain Symmetry During Initial Indexing on Modulated / Superstructure Crystals!**
-   > Systems with supercells (e.g. KCTO $12 \times 12$ supercell where $a'=62.5\text{ \AA}$) will be falsely rejected if constrained to the subcell ($5.22\text{ \AA}$). Always run unconstrained auto-indexing:
-   ```bash
-   dials.index imported.expt strong.refl
-   ```
-   Unconstrained indexing with calibrated geometry yields sub-pixel RMSDs ($<1.3\text{ px}$) and indexes $>65\%$ of reflections.
-5. **Bravais Setting Scoring**:
-   Executes `dials.refine_bravais_settings indexed.expt indexed.refl`, then runs `bravais_matcher.py` to rank candidate Bravais settings.
+4. **Auto-Indexing & Symmetry Constraints**:
+   - **For Reciprocal Space Orientation Solving (`ormatrix_auto.nxs` for streaming / Huber cradle)**:
+     > [!IMPORTANT]
+     > **Always Enforce Target Space Group & Unit Cell!**
+     > Running unconstrained `dials.index` defaults to primitive $P1$, which can arbitrarily permute axes (e.g. assigning the hexagonal $c$-axis to $a$, and setting $\alpha=60^\circ$ instead of $\gamma=120^\circ$). When prior lattice info is known, explicitly constrain indexing:
+     > ```bash
+     > dials.index imported.expt strong.refl space_group="{space_group}" unit_cell="{a},{b},{c},{alpha},{beta},{gamma}"
+     > ```
+     > If the space group is uncertain, run `dials.refine_bravais_settings`, select the matching Bravais solution (`bravais_setting_*.expt`), and use that reindexed model for `dials_to_orm.py`. **Never feed unrefined $P1$ models to `dials_to_orm.py`.**
+   - **For Unknown Supercell / Modulated Structure Exploration**:
+     Run unconstrained auto-indexing to avoid rejecting superlattice reflections:
+     ```bash
+     dials.index imported.expt strong.refl
+     ```
+5. **Bravais Setting Scoring & Reindexing**:
+   Executes `dials.refine_bravais_settings indexed.expt indexed.refl`, then runs `bravais_matcher.py` to rank candidate Bravais settings. Reindexing (`dials.reindex`) ensures standard crystallographic axis convention.
 
 ---
 

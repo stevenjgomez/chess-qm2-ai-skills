@@ -25,9 +25,10 @@ import pipeline_tracker
 PYTHON_EXEC = "/nfs/chess/sw/anaconda3_jpcr/bin/python"
 NIGHTLY_PYTHON = "/nfs/chess/sw/anaconda3_sgomezalvarado_nightly/bin/python"
 VIS_PYTHON = NIGHTLY_PYTHON if os.path.exists(NIGHTLY_PYTHON) else PYTHON_EXEC
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CODEBASE = os.environ.get(
     "CHESS_LEGACY_CODEBASE",
-    os.path.expanduser("~/chess_legacy_codebase")
+    SCRIPT_DIR
 )
 
 
